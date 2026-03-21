@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="description" content="Gemeinsame Ausgaben aufteilen — simpel und fair." />
+  <title>DIVIDE</title>
+  <style>
+    :root {
+      --green: #00ff88;
+      --green-dim: #00cc6a;
+      --green-glow: rgba(0, 255, 136, 0.12);
+      --cyan: #00e5ff;
+      --cyan-dim: #00b8cc;
+      --red: #ff4444;
+      --bg: #000;
+      --border: #1a1a1a;
+      --text: #aaa;
+      --text-bright: #f0f0f0;
+      --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-bright);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.7;
+      min-height: 100dvh;
+      -webkit-font-smoothing: antialiased;
+      padding: env(safe-area-inset-top, 0) 0 env(safe-area-inset-bottom, 0);
+    }
+
+    .wrap {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Header ── */
+    .prompt {
+      font-size: 12px;
+      color: var(--green-dim);
+      margin-bottom: 6px;
+    }
+    .prompt .sep   { color: #333; }
+    .prompt .path  { color: var(--cyan-dim); }
+    .prompt .dollar{ color: #555; margin: 0 6px 0 3px; }
+
+    .logo {
+      font-size: clamp(36px, 10vw, 64px);
+      font-weight: 700;
+      color: var(--green);
+      letter-spacing: 10px;
+      text-shadow: 0 0 40px rgba(0,255,136,0.4), 0 0 80px rgba(0,255,136,0.15);
+      margin-bottom: 4px;
+    }
+
+    .tagline {
+      color: #444;
+      font-size: 12px;
+      letter-spacing: 1px;
+      margin-bottom: 48px;
+    }
+
+    /* ── Feature list ── */
+    .section-label {
+      font-size: 11px;
+      color: #333;
+      letter-spacing: 2px;
+      margin-bottom: 16px;
+    }
+
+    .features {
+      list-style: none;
+      margin-bottom: 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .features li {
+      display: flex;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .features li .bullet { color: var(--green-dim); }
+    .features li strong  { color: var(--text-bright); font-weight: 400; }
+
+    /* ── Install block ── */
+    .install-card {
+      border: 1px solid #1a1a1a;
+      border-radius: 4px;
+      padding: 20px;
+      margin-bottom: 12px;
+      background: #040404;
+    }
+
+    .install-card .card-label {
+      font-size: 11px;
+      color: #333;
+      letter-spacing: 1px;
+      margin-bottom: 14px;
+    }
+
+    .code-block {
+      background: #000;
+      border: 1px solid #141414;
+      border-radius: 3px;
+      padding: 14px 16px;
+      font-size: 13px;
+      color: var(--green);
+      word-break: break-all;
+      position: relative;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .code-block:hover { border-color: #2a2a2a; }
+
+    .code-block .copy-hint {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 10px;
+      color: #333;
+      transition: color 0.2s;
+    }
+
+    .code-block:hover .copy-hint { color: var(--green-dim); }
+    .code-block.copied .copy-hint { color: var(--green); }
+
+    .prereq {
+      font-size: 11px;
+      color: #333;
+      margin-top: 10px;
+    }
+    .prereq a { color: #444; text-decoration: none; border-bottom: 1px solid #222; }
+    .prereq a:hover { color: var(--cyan-dim); border-color: var(--cyan-dim); }
+
+    /* ── Update block ── */
+    .update-card {
+      border: 1px solid #111;
+      border-radius: 4px;
+      padding: 14px 16px;
+      margin-bottom: 48px;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .update-card .label { font-size: 11px; color: #333; white-space: nowrap; }
+    .update-card code   { font-size: 12px; color: #555; font-family: var(--mono); }
+
+    /* ── How it works ── */
+    .steps {
+      list-style: none;
+      margin-bottom: 48px;
+      counter-reset: step;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .steps li {
+      counter-increment: step;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .steps li::before {
+      content: "0" counter(step);
+      font-size: 11px;
+      color: var(--green-dim);
+      min-width: 24px;
+      padding-top: 2px;
+    }
+
+    .steps li .step-text { font-size: 13px; color: var(--text); }
+    .steps li .step-text strong { color: var(--text-bright); font-weight: 400; }
+
+    /* ── Stack ── */
+    .stack {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 48px;
+    }
+
+    .stack-item {
+      border: 1px solid #111;
+      border-radius: 3px;
+      padding: 10px 12px;
+      font-size: 11px;
+    }
+
+    .stack-item .stack-key { color: #333; display: block; margin-bottom: 2px; }
+    .stack-item .stack-val { color: var(--text); }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid #0d0d0d;
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    footer .left  { font-size: 11px; color: #333; }
+    footer .right { display: flex; gap: 16px; }
+
+    footer a {
+      font-size: 11px;
+      color: #333;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    footer a:hover { color: var(--green-dim); }
+
+    /* ── Scanline effect ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="prompt">
+      <span class="green">divide</span><span class="sep">@</span><span class="path">github.io</span><span class="dollar">$</span>info
+    </div>
+
+    <div class="logo">DIVIDE</div>
+    <div class="tagline">// gemeinsame ausgaben aufteilen — simpel und fair</div>
+
+    <!-- Features -->
+    <div class="section-label">// FEATURES</div>
+    <ul class="features">
+      <li><span class="bullet">▸</span><span>Mehrere <strong>Aktivitäten</strong> — Ausflug, Urlaub, WG-Kasse</span></li>
+      <li><span class="bullet">▸</span><span><strong>Ausgaben erfassen</strong> — wer hat was bezahlt</span></li>
+      <li><span class="bullet">▸</span><span>Automatische <strong>Schulden-Berechnung</strong> mit minimalem Settlement</span></li>
+      <li><span class="bullet">▸</span><span><strong>Passwort-geschützt</strong> — geteilter Zugang, JWT Session</span></li>
+      <li><span class="bullet">▸</span><span><strong>PWA</strong> — installierbar auf dem Handy, optimiert für iPhone</span></li>
+      <li><span class="bullet">▸</span><span>Self-hosted — <strong>deine Daten, dein Server</strong></span></li>
+    </ul>
+
+    <!-- Install -->
+    <div class="section-label">// INSTALLATION</div>
+    <div class="install-card">
+      <div class="card-label">// ein befehl reicht</div>
+      <div class="code-block" onclick="copyInstall(this)">
+        curl -fsSL https://raw.githubusercontent.com/haenrick/divide/main/install.sh | bash
+        <span class="copy-hint">klicken zum kopieren</span>
+      </div>
+      <div class="prereq">
+        Benötigt: <a href="https://docs.docker.com/engine/install/" target="_blank">Docker</a> — wird automatisch installiert falls nicht vorhanden.
+      </div>
+    </div>
+
+    <!-- Update -->
+    <div class="update-card">
+      <span class="label">// update</span>
+      <code>cd divide &amp;&amp; docker compose pull &amp;&amp; docker compose up -d</code>
+    </div>
+
+    <!-- How it works -->
+    <div class="section-label">// WIE ES FUNKTIONIERT</div>
+    <ol class="steps">
+      <li><div class="step-text">Install-Skript ausführen — <strong>Passwort</strong> und <strong>Port</strong> eingeben</div></li>
+      <li><div class="step-text"><strong>Aktivität anlegen</strong> — z.B. "Griechenland 2025"</div></li>
+      <li><div class="step-text"><strong>Teilnehmer</strong> hinzufügen</div></li>
+      <li><div class="step-text"><strong>Ausgaben eintragen</strong> — wer hat was bezahlt</div></li>
+      <li><div class="step-text">Schulden-Ansicht zeigt: <strong>wer zahlt wem wieviel</strong></div></li>
+    </ol>
+
+    <!-- Stack -->
+    <div class="section-label">// TECH STACK</div>
+    <div class="stack">
+      <div class="stack-item"><span class="stack-key">frontend</span><span class="stack-val">Svelte 5 + Vite</span></div>
+      <div class="stack-item"><span class="stack-key">backend</span><span class="stack-val">Hono + Node.js</span></div>
+      <div class="stack-item"><span class="stack-key">datenbank</span><span class="stack-val">SQLite</span></div>
+      <div class="stack-item"><span class="stack-key">auth</span><span class="stack-val">JWT Cookie</span></div>
+      <div class="stack-item"><span class="stack-key">deployment</span><span class="stack-val">Docker</span></div>
+      <div class="stack-item"><span class="stack-key">plattformen</span><span class="stack-val">amd64 · arm64 · arm</span></div>
+    </div>
+
+    <footer>
+      <span class="left">// open source — MIT</span>
+      <div class="right">
+        <a href="https://github.com/haenrick/divide" target="_blank">github</a>
+        <a href="https://github.com/haenrick/divide/blob/main/README.md" target="_blank">docs</a>
+        <a href="https://github.com/haenrick/divide/issues" target="_blank">issues</a>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    function copyInstall(el) {
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/haenrick/divide/main/install.sh | bash'
+      navigator.clipboard.writeText(cmd).then(() => {
+        el.classList.add('copied')
+        el.querySelector('.copy-hint').textContent = '✓ kopiert'
+        setTimeout(() => {
+          el.classList.remove('copied')
+          el.querySelector('.copy-hint').textContent = 'klicken zum kopieren'
+        }, 2000)
+      })
+    }
+  </script>
+</body>
+</html>
