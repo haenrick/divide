@@ -35,7 +35,7 @@ db.exec(`
 `)
 
 // Migrations für bestehende DBs (selfhosted)
-try { db.exec(`ALTER TABLE activities ADD COLUMN room_token TEXT UNIQUE`) } catch {}
+try { db.exec(`ALTER TABLE activities ADD COLUMN room_token TEXT`) } catch {}
 try { db.exec(`ALTER TABLE activities ADD COLUMN expires_at TEXT`) } catch {}
 
 export function cleanupExpiredRooms() {
