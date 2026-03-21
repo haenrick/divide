@@ -15,7 +15,7 @@ divide@pi:~$ authenticate
 - Ausgaben pro Person erfassen
 - Automatische Schulden-Berechnung mit minimalem Settlement
 - Geteiltes Passwort-Login (JWT, 30 Tage Session)
-- PWA — installierbar auf dem Handy
+- PWA — installierbar auf dem Handy, optimiert für iPhone
 - Dark terminal aesthetic
 
 ## Tech Stack
@@ -28,11 +28,33 @@ divide@pi:~$ authenticate
 | Auth | JWT via httpOnly Cookie |
 | Deployment | Docker + docker-compose |
 
-## Deployment (Pi)
+---
+
+## Installation (Ein Befehl)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/haenrick/divide/main/install.sh | bash
+```
+
+Das Skript:
+- prüft ob Docker installiert ist (und installiert es falls nicht)
+- fragt nach Passwort und Port
+- generiert automatisch einen sicheren JWT-Secret
+- startet den Container
+
+### Update
+
+```bash
+cd divide && docker compose pull && docker compose up -d
+```
+
+---
+
+## Manuelle Installation
 
 **1. Repo klonen**
 ```bash
-git clone https://github.com/DEIN-USER/divide.git
+git clone https://github.com/haenrick/divide.git
 cd divide
 ```
 
@@ -45,35 +67,23 @@ nano .env
 ```env
 PASSWORD=dein-passwort
 JWT_SECRET=langer-zufaelliger-string
-```
-
-**3. Port festlegen**
-
-In `.env` den gewünschten Port eintragen:
-```env
 PORT=3050
 ```
 
-In `docker-compose.yml` den gleichen Port auf beiden Seiten:
-```yaml
-ports:
-  - "3050:3050"
-```
-
-**4. Starten**
+**3. Starten**
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 Die App läuft auf `http://pi-adresse:3050`.
 
-## Update
+### Update (manuell)
 
 ```bash
-git checkout docker-compose.yml && git pull && docker compose up -d --build
+cd divide && docker compose pull && docker compose up -d
 ```
 
-> `git checkout docker-compose.yml` stellt sicher dass lokale Änderungen den Pull nicht blockieren.
+---
 
 ## Lokale Entwicklung
 
@@ -87,6 +97,13 @@ cd frontend && npm install && npm run dev
 
 Frontend läuft auf `http://localhost:5173`, proxied API-Calls automatisch zum Backend auf Port 3000.
 
+Zum Testen mit lokalem Docker-Build:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+---
+
 ## Daten
 
-Die SQLite-Datenbank liegt in einem Docker Volume (`divide-data`) und überlebt Container-Updates.
+Die SQLite-Datenbank liegt in einem Docker Volume (`divide-data`) und überlebt Container-Updates und Neustarts.

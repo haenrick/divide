@@ -1,11 +1,11 @@
 services:
   divide:
-    build: .
+    image: ghcr.io/haenrick/divide:latest
     restart: unless-stopped
     ports:
-      - "3050:3050"
+      - "${PORT:-3050}:${PORT:-3050}"
     volumes:
-      - divide-data:/data  # SQLite-Datenbank überlebt Container-Updates
+      - divide-data:/data
     env_file:
       - .env
 

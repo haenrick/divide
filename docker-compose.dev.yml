@@ -1,0 +1,6 @@
+# Lokale Entwicklung: baut das Image selbst statt es zu pullen
+# Verwendung: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  divide:
+    build: .
+    image: divide-local
