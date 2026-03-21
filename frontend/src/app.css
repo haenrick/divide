@@ -12,8 +12,8 @@
   --bg-input: #0a0a0a;
   --border: #1a1a1a;
   --border-bright: #00ff8840;
-  --text: #888;
-  --text-bright: #ccc;
+  --text: #aaa;
+  --text-bright: #f0f0f0;
   --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 }
 
@@ -31,13 +31,21 @@ html, body {
   line-height: 1.6;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  /* Kein Zoom beim Antippen von Inputs auf iOS */
+  -webkit-text-size-adjust: 100%;
 }
 
 #app {
   min-height: 100dvh;
   max-width: 640px;
   margin: 0 auto;
-  padding: 0 16px 80px;
+  /* Safe area für Notch/Dynamic Island/Home Indicator */
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right)) max(80px, calc(env(safe-area-inset-bottom) + 24px)) max(16px, env(safe-area-inset-left));
+}
+
+/* Inputs nicht kleiner als 16px → verhindert Auto-Zoom auf iOS */
+input, select, textarea {
+  font-size: max(16px, 1em);
 }
 
 /* Scrollbar */

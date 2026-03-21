@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8042:3050"        # linke Seite = Pi-Port, rechts = Container-intern
+      - "3050:3050"
     volumes:
       - divide-data:/data  # SQLite-Datenbank überlebt Container-Updates
     env_file:
