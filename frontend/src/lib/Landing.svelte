@@ -268,11 +268,8 @@
 
   .warning {
     font-size: 11px;
-    color: #664400;
+    color: #444;
     letter-spacing: 1px;
-    border: 1px solid #332200;
-    padding: 10px 14px;
-    background: #0d0800;
   }
 
   /* Footer */
@@ -292,19 +289,19 @@
   }
 
   .footer-links a {
-    color: #333;
+    color: #444;
     text-decoration: none;
     letter-spacing: 1px;
     transition: color 0.15s;
   }
 
   .footer-links a:hover { color: var(--cyan); }
-  .sep { color: #222; }
-  .ver { color: #2a2a2a; letter-spacing: 1px; }
+  .sep { color: #333; }
+  .ver { color: #444; letter-spacing: 1px; }
 
   .expires {
     font-size: 10px;
-    color: #1e1e1e;
+    color: #333;
     letter-spacing: 1px;
   }
 </style>
