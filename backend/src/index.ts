@@ -9,16 +9,22 @@ import { randomBytes } from 'crypto'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
+import { Resend } from 'resend'
 import db, { cleanupExpiredRooms } from './db.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
 mkdirSync(join(__dirname, '../../data'), { recursive: true })
 
-const PASSWORD  = process.env.PASSWORD  ?? 'geheim'
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret'
-const MODE      = process.env.MODE       ?? 'selfhosted'
-const PORT      = Number(process.env.PORT ?? 3000)
+const PASSWORD    = process.env.PASSWORD    ?? 'geheim'
+const JWT_SECRET  = process.env.JWT_SECRET  ?? 'dev-secret'
+const MODE        = process.env.MODE        ?? 'selfhosted'
+const PORT        = Number(process.env.PORT ?? 3000)
+const APP_URL     = process.env.APP_URL     ?? 'https://divide-it.app'
+const RESEND_KEY  = process.env.RESEND_API_KEY
+const RESEND_FROM = process.env.RESEND_FROM ?? 'DIVIDE <noreply@divide-it.app>'
+
+const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 
 const app = new Hono()
 app.use('*', cors({ origin: '*', credentials: true }))
@@ -63,14 +69,32 @@ if (MODE === 'selfhosted') {
 // ─── Rooms (saas) ────────────────────────────────────────────────────────────
 
 app.post('/api/rooms', async (c) => {
-  const { name } = await c.req.json()
+  const { name, email } = await c.req.json()
   if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
-  const token = randomBytes(5).toString('hex') // 10 Zeichen
+  const token = randomBytes(5).toString('hex')
   const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
   const result = db.prepare(
     'INSERT INTO activities (name, room_token, expires_at) VALUES (?, ?, ?)'
   ).run(name.trim(), token, expires_at)
   const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
+
+  if (email && resend) {
+    const url = `${APP_URL}/#/r/${token}`
+    resend.emails.send({
+      from: RESEND_FROM,
+      to: [email],
+      subject: `DIVIDE // ${name.trim()}`,
+      html: `<div style="background:#000;color:#00ff88;font-family:monospace;padding:32px;max-width:480px">
+        <div style="font-size:24px;font-weight:700;letter-spacing:0.2em;margin-bottom:24px">DIVIDE_</div>
+        <div style="color:#aaa;margin-bottom:8px">// dein link zur gruppe</div>
+        <div style="color:#00ff88;font-size:18px;font-weight:700;margin-bottom:24px">${name.trim()}</div>
+        <a href="${url}" style="display:block;background:#00ff88;color:#000;text-decoration:none;padding:12px 20px;font-weight:700;letter-spacing:2px;margin-bottom:24px">&gt; gruppe öffnen</a>
+        <div style="color:#333;font-size:11px;letter-spacing:1px">${url}</div>
+        <div style="color:#222;font-size:10px;margin-top:24px;letter-spacing:1px">// gruppe wird nach 30 tagen automatisch gelöscht</div>
+      </div>`,
+    }).catch(() => {}) // Email-Fehler sind nicht kritisch
+  }
+
   return c.json(activity, 201)
 })
 

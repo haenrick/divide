@@ -6,17 +6,21 @@
   let { onRoom }: { onRoom: (activity: Activity) => void } = $props()
 
   let name     = $state('')
+  let email    = $state('')
   let loading  = $state(false)
   let error    = $state('')
+  let emailSent = $state(false)
   let recent   = $state<SavedRoom[]>(getRecentRooms())
 
   async function create() {
     if (!name.trim()) return
     loading = true
     error = ''
+    emailSent = false
     try {
-      const activity = await api.rooms.create(name.trim())
+      const activity = await api.rooms.create(name.trim(), email.trim() || undefined)
       saveRoom(activity.room_token!, activity.name)
+      if (email.trim()) emailSent = true
       window.location.hash = `/r/${activity.room_token}`
       onRoom(activity)
     } catch {
@@ -71,6 +75,17 @@
         {loading ? '...' : 'starten'}
       </button>
     </div>
+    <div class="email-row">
+      <span class="prompt-dim">@</span>
+      <input
+        class="email-input"
+        type="email"
+        bind:value={email}
+        onkeydown={onKeydown}
+        placeholder="email für link-zusendung (optional)"
+        disabled={loading}
+      />
+    </div>
     {#if error}
       <div class="error">{error}</div>
     {/if}
@@ -103,7 +118,7 @@
       <li><span class="num">03</span> divide zeigt, wer wem was schuldet</li>
     </ol>
     <div class="warning">
-      ⚠ der link ist der einzige zugang zur gruppe — speicher ihn oder teile ihn sofort
+      <span class="warn-prefix">[!]</span> link ist einziger zugang — sofort speichern oder teilen
     </div>
   </section>
 
@@ -152,7 +167,7 @@
 
   .tagline {
     margin-top: 12px;
-    color: #444;
+    color: #555;
     font-size: 13px;
     letter-spacing: 2px;
   }
@@ -162,7 +177,7 @@
 
   .label {
     font-size: 11px;
-    color: #555;
+    color: #666;
     letter-spacing: 2px;
     margin-bottom: 4px;
   }
@@ -215,6 +230,28 @@
   button:disabled { opacity: 0.3; cursor: not-allowed; }
   button:not(:disabled):hover { opacity: 0.8; }
 
+  .email-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border: 1px solid #111;
+    background: var(--bg-input);
+  }
+  .email-row:focus-within { border-color: #222; }
+  .prompt-dim { color: #333; font-size: 14px; flex-shrink: 0; }
+  .email-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: #888;
+    font-family: var(--mono);
+    font-size: 13px;
+    min-width: 0;
+  }
+  .email-input::placeholder { color: #2a2a2a; }
+
   .error { font-size: 12px; color: var(--red); letter-spacing: 1px; }
 
   /* Recent */
@@ -240,8 +277,8 @@
   }
 
   .room-btn:hover { border-color: var(--green); color: var(--green); }
-  .room-date { font-size: 10px; color: #444; flex-shrink: 0; }
-  .hint { font-size: 10px; color: #2a2a2a; letter-spacing: 1px; margin-top: 4px; }
+  .room-date { font-size: 10px; color: #555; flex-shrink: 0; }
+  .hint { font-size: 10px; color: #444; letter-spacing: 1px; margin-top: 4px; }
 
   /* How */
   .how { display: flex; flex-direction: column; gap: 16px; }
@@ -259,7 +296,7 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    color: #555;
+    color: #666;
     font-size: 13px;
     letter-spacing: 1px;
   }
@@ -268,9 +305,10 @@
 
   .warning {
     font-size: 11px;
-    color: #444;
+    color: #555;
     letter-spacing: 1px;
   }
+  .warn-prefix { color: var(--cyan-dim); margin-right: 4px; }
 
   /* Footer */
   footer {
@@ -289,19 +327,19 @@
   }
 
   .footer-links a {
-    color: #444;
+    color: #666;
     text-decoration: none;
     letter-spacing: 1px;
     transition: color 0.15s;
   }
 
   .footer-links a:hover { color: var(--cyan); }
-  .sep { color: #333; }
-  .ver { color: #444; letter-spacing: 1px; }
+  .sep { color: #555; }
+  .ver { color: #666; letter-spacing: 1px; }
 
   .expires {
     font-size: 10px;
-    color: #333;
+    color: #555;
     letter-spacing: 1px;
   }
 </style>

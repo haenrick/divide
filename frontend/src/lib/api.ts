@@ -30,7 +30,7 @@ export const api = {
     logout: ()                 => req<void>('/logout', { method: 'POST' }),
   },
   rooms: {
-    create: (name: string) => req<Activity>('/rooms', { method: 'POST', body: JSON.stringify({ name }) }),
+    create: (name: string, email?: string) => req<Activity>('/rooms', { method: 'POST', body: JSON.stringify({ name, email }) }),
     get:    (token: string) => req<Activity>(`/rooms/${token}`),
   },
   activities: {
