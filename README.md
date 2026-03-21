@@ -47,10 +47,17 @@ PASSWORD=dein-passwort
 JWT_SECRET=langer-zufaelliger-string
 ```
 
-**3. Port in `docker-compose.yml` wählen** (linke Seite = Pi-Port)
+**3. Port festlegen**
+
+In `.env` den gewünschten Port eintragen:
+```env
+PORT=3050
+```
+
+In `docker-compose.yml` den gleichen Port auf beiden Seiten:
 ```yaml
 ports:
-  - "8042:3000"
+  - "3050:3050"
 ```
 
 **4. Starten**
@@ -58,13 +65,15 @@ ports:
 docker compose up -d --build
 ```
 
-Die App läuft auf `http://pi-adresse:8042`.
+Die App läuft auf `http://pi-adresse:3050`.
 
 ## Update
 
 ```bash
-git pull && docker compose up -d --build
+git checkout docker-compose.yml && git pull && docker compose up -d --build
 ```
+
+> `git checkout docker-compose.yml` stellt sicher dass lokale Änderungen den Pull nicht blockieren.
 
 ## Lokale Entwicklung
 
