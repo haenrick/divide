@@ -1,13 +1,16 @@
 <script lang="ts">
   import Login from './lib/Login.svelte'
+  import Landing from './lib/Landing.svelte'
   import ActivityList from './lib/ActivityList.svelte'
   import ActivityDetail from './lib/ActivityDetail.svelte'
-  import { api, AuthError, type Activity } from './lib/api'
+  import { api, AuthError, type Activity, type AppConfig } from './lib/api'
 
-  let authed = $state<boolean | null>(null)  // null = noch unbekannt
-  let selected = $state<Activity | null>(null)
+  let appConfig = $state<AppConfig | null>(null)
+  let authed    = $state<boolean | null>(null)
+  let selected  = $state<Activity | null>(null)
 
-  // Beim Start prüfen ob Session noch gültig ist
+  // ─── Selfhosted: Auth prüfen ───────────────────────────────────────────────
+
   async function checkAuth() {
     try {
       await api.activities.list()
@@ -23,10 +26,62 @@
     selected = null
   }
 
-  $effect(() => { checkAuth() })
+  // ─── SaaS: URL-Hash Routing ───────────────────────────────────────────────
+  // Hash-Format: #/r/TOKEN
+
+  function getTokenFromHash(): string | null {
+    const hash = window.location.hash.replace('#', '')
+    const match = hash.match(/^\/r\/([a-f0-9]+)$/)
+    return match ? match[1] : null
+  }
+
+  async function loadFromHash() {
+    const token = getTokenFromHash()
+    if (!token) { selected = null; return }
+    try {
+      selected = await api.rooms.get(token)
+    } catch {
+      // Token ungültig oder abgelaufen → zurück zur Landing
+      window.location.hash = ''
+      selected = null
+    }
+  }
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
+
+  $effect(() => {
+    api.config.get().then(async (cfg) => {
+      appConfig = cfg
+
+      if (cfg.mode === 'saas') {
+        // Hash-Routing initialisieren
+        await loadFromHash()
+        window.addEventListener('hashchange', loadFromHash)
+      } else {
+        // Selfhosted: Auth prüfen
+        await checkAuth()
+      }
+    })
+  })
 </script>
 
-{#if authed === null}
+<!-- ─── Loading ─────────────────────────────────────────────────────────── -->
+{#if appConfig === null}
+  <div class="loading">initializing...</div>
+
+<!-- ─── SaaS Mode ─────────────────────────────────────────────────────── -->
+{:else if appConfig.mode === 'saas'}
+  {#if selected}
+    <ActivityDetail
+      activity={selected}
+      onBack={() => { window.location.hash = ''; selected = null }}
+    />
+  {:else}
+    <Landing onRoom={(a) => selected = a} />
+  {/if}
+
+<!-- ─── Selfhosted Mode ────────────────────────────────────────────────── -->
+{:else if authed === null}
   <div class="loading">initializing...</div>
 
 {:else if !authed}

@@ -5,56 +5,85 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import { sign, verify } from 'hono/jwt'
 import { mkdirSync } from 'fs'
+import { randomBytes } from 'crypto'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
-import db from './db.js'
+import db, { cleanupExpiredRooms } from './db.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
 mkdirSync(join(__dirname, '../../data'), { recursive: true })
 
-const PASSWORD = process.env.PASSWORD ?? 'geheim'
+const PASSWORD  = process.env.PASSWORD  ?? 'geheim'
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret'
+const MODE      = process.env.MODE       ?? 'selfhosted'
+const PORT      = Number(process.env.PORT ?? 3000)
 
 const app = new Hono()
 app.use('*', cors({ origin: '*', credentials: true }))
 
-// ─── Auth ───────────────────────────────────────────────────────────────────
+// Beim Start abgelaufene Rooms löschen, danach täglich
+cleanupExpiredRooms()
+setInterval(cleanupExpiredRooms, 24 * 60 * 60 * 1000)
 
-app.post('/api/login', async (c) => {
-  const { password } = await c.req.json()
-  if (password !== PASSWORD) {
-    return c.json({ error: 'Falsches Passwort' }, 401)
-  }
-  const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
-  setCookie(c, 'token', token, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30,
+// ─── Config ─────────────────────────────────────────────────────────────────
+
+app.get('/api/config', (c) => c.json({ mode: MODE }))
+
+// ─── Auth (nur selfhosted) ───────────────────────────────────────────────────
+
+if (MODE === 'selfhosted') {
+  app.post('/api/login', async (c) => {
+    const { password } = await c.req.json()
+    if (password !== PASSWORD) return c.json({ error: 'Falsches Passwort' }, 401)
+    const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
+    setCookie(c, 'token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30 })
+    return c.json({ ok: true })
   })
-  return c.json({ ok: true })
+
+  app.post('/api/logout', (c) => {
+    deleteCookie(c, 'token', { path: '/' })
+    return c.json({ ok: true })
+  })
+
+  app.use('/api/*', async (c, next) => {
+    if (c.req.path === '/api/config') return next()
+    const token = getCookie(c, 'token')
+    if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
+    try {
+      await verify(token, JWT_SECRET, 'HS256')
+      await next()
+    } catch {
+      return c.json({ error: 'Session abgelaufen' }, 401)
+    }
+  })
+}
+
+// ─── Rooms (saas) ────────────────────────────────────────────────────────────
+
+app.post('/api/rooms', async (c) => {
+  const { name } = await c.req.json()
+  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const token = randomBytes(5).toString('hex') // 10 Zeichen
+  const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
+  const result = db.prepare(
+    'INSERT INTO activities (name, room_token, expires_at) VALUES (?, ?, ?)'
+  ).run(name.trim(), token, expires_at)
+  const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
+  return c.json(activity, 201)
 })
 
-app.post('/api/logout', (c) => {
-  deleteCookie(c, 'token', { path: '/' })
-  return c.json({ ok: true })
+app.get('/api/rooms/:token', (c) => {
+  const token = c.req.param('token')
+  const activity = db.prepare(
+    `SELECT * FROM activities WHERE room_token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))`
+  ).get(token)
+  if (!activity) return c.json({ error: 'Room nicht gefunden oder abgelaufen' }, 404)
+  return c.json(activity)
 })
 
-// Auth middleware für alle weiteren /api Routen
-app.use('/api/*', async (c, next) => {
-  const token = getCookie(c, 'token')
-  if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
-  try {
-    await verify(token, JWT_SECRET, 'HS256')
-    await next()
-  } catch {
-    return c.json({ error: 'Session abgelaufen' }, 401)
-  }
-})
-
-// ─── Activities ────────────────────────────────────────────────────────────
+// ─── Activities ──────────────────────────────────────────────────────────────
 
 app.get('/api/activities', (c) => {
   const activities = db.prepare('SELECT * FROM activities ORDER BY created_at DESC').all()
@@ -75,7 +104,7 @@ app.delete('/api/activities/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Participants ───────────────────────────────────────────────────────────
+// ─── Participants ────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/participants', (c) => {
   const id = Number(c.req.param('id'))
@@ -95,7 +124,7 @@ app.delete('/api/participants/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Expenses ───────────────────────────────────────────────────────────────
+// ─── Expenses ────────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/expenses', (c) => {
   const id = Number(c.req.param('id'))
@@ -124,7 +153,7 @@ app.delete('/api/expenses/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Balances ───────────────────────────────────────────────────────────────
+// ─── Balances ────────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/balances', (c) => {
   const id = Number(c.req.param('id'))
@@ -141,7 +170,7 @@ app.get('/api/activities/:id/balances', (c) => {
   for (const e of expenses) net[e.paid_by] = (net[e.paid_by] ?? 0) + e.amount
 
   const creditors = participants.filter(p => net[p.id] > 0.005).map(p => ({ ...p, amount: net[p.id] }))
-  const debtors = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
+  const debtors   = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
 
   const settlements: Array<{ from: string; to: string; amount: number }> = []
   let i = 0, j = 0
@@ -165,11 +194,10 @@ app.get('/api/activities/:id/balances', (c) => {
   })
 })
 
-// ─── Frontend ───────────────────────────────────────────────────────────────
+// ─── Frontend ────────────────────────────────────────────────────────────────
 
 app.use('/*', serveStatic({ root: join(__dirname, '../../frontend/dist') }))
 
-const PORT = Number(process.env.PORT ?? 3000)
 serve({ fetch: app.fetch, port: PORT }, () => {
-  console.log(`[DIVIDE] Server running on http://localhost:${PORT}`)
+  console.log(`[DIVIDE] Server running on http://localhost:${PORT} (mode: ${MODE})`)
 })

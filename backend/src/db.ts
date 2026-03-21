@@ -13,6 +13,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS activities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    room_token TEXT UNIQUE,
+    expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -31,5 +33,14 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `)
+
+// Migrations für bestehende DBs (selfhosted)
+try { db.exec(`ALTER TABLE activities ADD COLUMN room_token TEXT UNIQUE`) } catch {}
+try { db.exec(`ALTER TABLE activities ADD COLUMN expires_at TEXT`) } catch {}
+
+export function cleanupExpiredRooms() {
+  const result = db.prepare(`DELETE FROM activities WHERE expires_at IS NOT NULL AND expires_at < datetime('now')`).run()
+  if (result.changes > 0) console.log(`[DIVIDE] ${result.changes} abgelaufene Room(s) gelöscht`)
+}
 
 export default db
