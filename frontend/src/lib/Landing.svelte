@@ -1,11 +1,14 @@
 <script lang="ts">
   import { api, type Activity } from './api'
+  import { saveRoom, getRecentRooms, removeRoom, type SavedRoom } from './rooms'
+  import { version } from '../../package.json'
 
   let { onRoom }: { onRoom: (activity: Activity) => void } = $props()
 
-  let name = $state('')
-  let loading = $state(false)
-  let error = $state('')
+  let name     = $state('')
+  let loading  = $state(false)
+  let error    = $state('')
+  let recent   = $state<SavedRoom[]>(getRecentRooms())
 
   async function create() {
     if (!name.trim()) return
@@ -13,14 +16,31 @@
     error = ''
     try {
       const activity = await api.rooms.create(name.trim())
-      // URL im Browser setzen damit der Link teilbar ist
+      saveRoom(activity.room_token!, activity.name)
       window.location.hash = `/r/${activity.room_token}`
       onRoom(activity)
-    } catch (e) {
+    } catch {
       error = 'Fehler beim Erstellen. Bitte nochmal versuchen.'
     } finally {
       loading = false
     }
+  }
+
+  async function openRoom(token: string) {
+    try {
+      const activity = await api.rooms.get(token)
+      saveRoom(token, activity.name)
+      window.location.hash = `/r/${token}`
+      onRoom(activity)
+    } catch {
+      // Room abgelaufen → aus Liste entfernen
+      removeRoom(token)
+      recent = getRecentRooms()
+    }
+  }
+
+  function formatDate(iso: string) {
+    return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' })
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -34,6 +54,7 @@
     <p class="tagline">// gemeinsame ausgaben aufteilen</p>
   </header>
 
+  <!-- Neue Gruppe -->
   <section class="create">
     <div class="label">&gt; neue gruppe erstellen</div>
     <div class="input-row">
@@ -55,6 +76,25 @@
     {/if}
   </section>
 
+  <!-- Zuletzt besucht -->
+  {#if recent.length > 0}
+    <section class="recent">
+      <div class="label">// zuletzt besucht</div>
+      <ul>
+        {#each recent as room (room.token)}
+          <li>
+            <button class="room-btn" onclick={() => openRoom(room.token)}>
+              <span class="room-name">{room.name}</span>
+              <span class="room-date">{formatDate(room.visited)}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+      <div class="hint">// auf diesem gerät gespeichert · link teilen damit andere zugriff haben</div>
+    </section>
+  {/if}
+
+  <!-- Erklärung -->
   <section class="how">
     <div class="label">// so funktioniert es</div>
     <ol>
@@ -62,10 +102,21 @@
       <li><span class="num">02</span> jeder trägt seine ausgaben ein</li>
       <li><span class="num">03</span> divide zeigt, wer wem was schuldet</li>
     </ol>
+    <div class="warning">
+      ⚠ der link ist der einzige zugang zur gruppe — speicher ihn oder teile ihn sofort
+    </div>
   </section>
 
+  <!-- Footer -->
   <footer>
-    <span class="expires">// gruppen werden nach 30 tagen automatisch gelöscht</span>
+    <div class="footer-links">
+      <a href="https://haenrick.github.io/divide/" target="_blank" rel="noopener">info &amp; installation</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/haenrick/divide" target="_blank" rel="noopener">github</a>
+      <span class="sep">·</span>
+      <span class="ver">v{version}</span>
+    </div>
+    <div class="expires">// gruppen werden nach 30 tagen automatisch gelöscht</div>
   </footer>
 </div>
 
@@ -74,13 +125,11 @@
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
-    gap: 48px;
+    gap: 40px;
     padding: 48px 0 32px;
   }
 
-  header {
-    text-align: center;
-  }
+  header { text-align: center; }
 
   .logo {
     font-size: clamp(2.5rem, 10vw, 4rem);
@@ -108,11 +157,8 @@
     letter-spacing: 2px;
   }
 
-  .create {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+  /* Create */
+  .create { display: flex; flex-direction: column; gap: 12px; }
 
   .label {
     font-size: 11px;
@@ -136,11 +182,7 @@
     box-shadow: 0 0 0 1px var(--green);
   }
 
-  .prompt {
-    color: var(--green);
-    font-size: 14px;
-    flex-shrink: 0;
-  }
+  .prompt { color: var(--green); font-size: 14px; flex-shrink: 0; }
 
   input {
     flex: 1;
@@ -173,17 +215,36 @@
   button:disabled { opacity: 0.3; cursor: not-allowed; }
   button:not(:disabled):hover { opacity: 0.8; }
 
-  .error {
-    font-size: 12px;
-    color: var(--red);
+  .error { font-size: 12px; color: var(--red); letter-spacing: 1px; }
+
+  /* Recent */
+  .recent { display: flex; flex-direction: column; gap: 10px; }
+
+  ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+
+  .room-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-card);
+    border: 1px solid #1a1a1a;
+    color: #e8e8e8;
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 14px;
+    cursor: pointer;
     letter-spacing: 1px;
+    transition: border-color 0.15s;
+    text-align: left;
   }
 
-  .how {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
+  .room-btn:hover { border-color: var(--green); color: var(--green); }
+  .room-date { font-size: 10px; color: #444; flex-shrink: 0; }
+  .hint { font-size: 10px; color: #2a2a2a; letter-spacing: 1px; margin-top: 4px; }
+
+  /* How */
+  .how { display: flex; flex-direction: column; gap: 16px; }
 
   ol {
     list-style: none;
@@ -203,20 +264,47 @@
     letter-spacing: 1px;
   }
 
-  .num {
-    color: var(--cyan);
+  .num { color: var(--cyan); font-size: 11px; flex-shrink: 0; }
+
+  .warning {
     font-size: 11px;
-    flex-shrink: 0;
+    color: #664400;
+    letter-spacing: 1px;
+    border: 1px solid #332200;
+    padding: 10px 14px;
+    background: #0d0800;
   }
 
+  /* Footer */
   footer {
     margin-top: auto;
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
+
+  .footer-links {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+  }
+
+  .footer-links a {
+    color: #333;
+    text-decoration: none;
+    letter-spacing: 1px;
+    transition: color 0.15s;
+  }
+
+  .footer-links a:hover { color: var(--cyan); }
+  .sep { color: #222; }
+  .ver { color: #2a2a2a; letter-spacing: 1px; }
 
   .expires {
     font-size: 10px;
-    color: #2a2a2a;
+    color: #1e1e1e;
     letter-spacing: 1px;
   }
 </style>

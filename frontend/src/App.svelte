@@ -4,6 +4,7 @@
   import ActivityList from './lib/ActivityList.svelte'
   import ActivityDetail from './lib/ActivityDetail.svelte'
   import { api, AuthError, type Activity, type AppConfig } from './lib/api'
+  import { saveRoom } from './lib/rooms'
 
   let appConfig = $state<AppConfig | null>(null)
   let authed    = $state<boolean | null>(null)
@@ -40,6 +41,7 @@
     if (!token) { selected = null; return }
     try {
       selected = await api.rooms.get(token)
+      saveRoom(token, selected.name)
     } catch {
       // Token ungültig oder abgelaufen → zurück zur Landing
       window.location.hash = ''
