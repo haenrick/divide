@@ -2,7 +2,7 @@ name: Build & Push Docker Image
 
 on:
   push:
-    branches: [main]
+    branches: [main, saas]
 
 jobs:
   build:
@@ -28,6 +28,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Tag bestimmen
+        id: tag
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build & Push
         uses: docker/build-push-action@v6
         with:
@@ -36,7 +45,7 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: |
-            ghcr.io/haenrick/divide:latest
+            ghcr.io/haenrick/divide:${{ steps.tag.outputs.tag }}
             ghcr.io/haenrick/divide:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

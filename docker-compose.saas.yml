@@ -1,0 +1,13 @@
+services:
+  divide:
+    image: ghcr.io/haenrick/divide:saas
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - divide-data:/data
+    env_file:
+      - .env
+
+volumes:
+  divide-data:
