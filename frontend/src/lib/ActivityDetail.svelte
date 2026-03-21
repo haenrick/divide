@@ -60,10 +60,24 @@
   function shareLink() {
     if (!activity.room_token) return
     const url = `${window.location.origin}/#/r/${activity.room_token}`
-    navigator.clipboard.writeText(url).then(() => {
+    // Fallback für HTTP (kein HTTPS) oder ältere Browser
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        copied = true
+        setTimeout(() => copied = false, 2000)
+      })
+    } else {
+      const el = document.createElement('textarea')
+      el.value = url
+      el.style.position = 'fixed'
+      el.style.opacity = '0'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
       copied = true
       setTimeout(() => copied = false, 2000)
-    })
+    }
   }
 
   $effect(() => { load() })
