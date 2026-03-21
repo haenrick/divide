@@ -1,5 +1,7 @@
 # ── Stage 1: Frontend bauen ──────────────────────────────────────────────────
-FROM node:22-alpine AS frontend-builder
+# $BUILDPLATFORM = Architektur des GitHub-Runners (amd64)
+# → Frontend wird nie per QEMU emuliert, egal für welche Zielplattform gebaut wird
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
