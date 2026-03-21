@@ -1,0 +1,175 @@
+import { Hono } from 'hono'
+import { serve } from '@hono/node-server'
+import { cors } from 'hono/cors'
+import { serveStatic } from '@hono/node-server/serve-static'
+import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
+import { sign, verify } from 'hono/jwt'
+import { mkdirSync } from 'fs'
+import { join, dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
+import { config } from 'dotenv'
+import db from './db.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+config({ path: resolve(__dirname, '../../.env') })
+mkdirSync(join(__dirname, '../../data'), { recursive: true })
+
+const PASSWORD = process.env.PASSWORD ?? 'geheim'
+const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret'
+
+const app = new Hono()
+app.use('*', cors({ origin: '*', credentials: true }))
+
+// ─── Auth ───────────────────────────────────────────────────────────────────
+
+app.post('/api/login', async (c) => {
+  const { password } = await c.req.json()
+  if (password !== PASSWORD) {
+    return c.json({ error: 'Falsches Passwort' }, 401)
+  }
+  const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
+  setCookie(c, 'token', token, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  })
+  return c.json({ ok: true })
+})
+
+app.post('/api/logout', (c) => {
+  deleteCookie(c, 'token', { path: '/' })
+  return c.json({ ok: true })
+})
+
+// Auth middleware für alle weiteren /api Routen
+app.use('/api/*', async (c, next) => {
+  const token = getCookie(c, 'token')
+  if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
+  try {
+    await verify(token, JWT_SECRET, 'HS256')
+    await next()
+  } catch {
+    return c.json({ error: 'Session abgelaufen' }, 401)
+  }
+})
+
+// ─── Activities ────────────────────────────────────────────────────────────
+
+app.get('/api/activities', (c) => {
+  const activities = db.prepare('SELECT * FROM activities ORDER BY created_at DESC').all()
+  return c.json(activities)
+})
+
+app.post('/api/activities', async (c) => {
+  const { name } = await c.req.json()
+  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const result = db.prepare('INSERT INTO activities (name) VALUES (?)').run(name.trim())
+  const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
+  return c.json(activity, 201)
+})
+
+app.delete('/api/activities/:id', (c) => {
+  const id = Number(c.req.param('id'))
+  db.prepare('DELETE FROM activities WHERE id = ?').run(id)
+  return c.json({ ok: true })
+})
+
+// ─── Participants ───────────────────────────────────────────────────────────
+
+app.get('/api/activities/:id/participants', (c) => {
+  const id = Number(c.req.param('id'))
+  return c.json(db.prepare('SELECT * FROM participants WHERE activity_id = ?').all(id))
+})
+
+app.post('/api/activities/:id/participants', async (c) => {
+  const activity_id = Number(c.req.param('id'))
+  const { name } = await c.req.json()
+  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const result = db.prepare('INSERT INTO participants (activity_id, name) VALUES (?, ?)').run(activity_id, name.trim())
+  return c.json(db.prepare('SELECT * FROM participants WHERE id = ?').get(result.lastInsertRowid), 201)
+})
+
+app.delete('/api/participants/:id', (c) => {
+  db.prepare('DELETE FROM participants WHERE id = ?').run(Number(c.req.param('id')))
+  return c.json({ ok: true })
+})
+
+// ─── Expenses ───────────────────────────────────────────────────────────────
+
+app.get('/api/activities/:id/expenses', (c) => {
+  const id = Number(c.req.param('id'))
+  return c.json(db.prepare(`
+    SELECT e.*, p.name as paid_by_name FROM expenses e
+    JOIN participants p ON e.paid_by = p.id
+    WHERE e.activity_id = ? ORDER BY e.created_at DESC
+  `).all(id))
+})
+
+app.post('/api/activities/:id/expenses', async (c) => {
+  const activity_id = Number(c.req.param('id'))
+  const { paid_by, amount, description } = await c.req.json()
+  if (!paid_by || !amount || amount <= 0) return c.json({ error: 'Invalid expense' }, 400)
+  const result = db.prepare(
+    'INSERT INTO expenses (activity_id, paid_by, amount, description) VALUES (?, ?, ?, ?)'
+  ).run(activity_id, paid_by, amount, description ?? '')
+  return c.json(db.prepare(`
+    SELECT e.*, p.name as paid_by_name FROM expenses e
+    JOIN participants p ON e.paid_by = p.id WHERE e.id = ?
+  `).get(result.lastInsertRowid), 201)
+})
+
+app.delete('/api/expenses/:id', (c) => {
+  db.prepare('DELETE FROM expenses WHERE id = ?').run(Number(c.req.param('id')))
+  return c.json({ ok: true })
+})
+
+// ─── Balances ───────────────────────────────────────────────────────────────
+
+app.get('/api/activities/:id/balances', (c) => {
+  const id = Number(c.req.param('id'))
+  const participants = db.prepare('SELECT * FROM participants WHERE activity_id = ?').all(id) as Array<{ id: number; name: string }>
+  const expenses = db.prepare('SELECT * FROM expenses WHERE activity_id = ?').all(id) as Array<{ paid_by: number; amount: number }>
+
+  if (participants.length === 0) return c.json({ balances: [], settlements: [], total: 0 })
+
+  const total = expenses.reduce((s, e) => s + e.amount, 0)
+  const share = total / participants.length
+
+  const net: Record<number, number> = {}
+  for (const p of participants) net[p.id] = -share
+  for (const e of expenses) net[e.paid_by] = (net[e.paid_by] ?? 0) + e.amount
+
+  const creditors = participants.filter(p => net[p.id] > 0.005).map(p => ({ ...p, amount: net[p.id] }))
+  const debtors = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
+
+  const settlements: Array<{ from: string; to: string; amount: number }> = []
+  let i = 0, j = 0
+  while (i < debtors.length && j < creditors.length) {
+    const pay = Math.min(debtors[i].amount, creditors[j].amount)
+    if (pay > 0.005) settlements.push({ from: debtors[i].name, to: creditors[j].name, amount: Math.round(pay * 100) / 100 })
+    debtors[i].amount -= pay
+    creditors[j].amount -= pay
+    if (debtors[i].amount < 0.005) i++
+    if (creditors[j].amount < 0.005) j++
+  }
+
+  return c.json({
+    balances: participants.map(p => ({
+      id: p.id, name: p.name,
+      paid: expenses.filter(e => e.paid_by === p.id).reduce((s, e) => s + e.amount, 0),
+      share, net: Math.round(net[p.id] * 100) / 100,
+    })),
+    settlements,
+    total: Math.round(total * 100) / 100,
+  })
+})
+
+// ─── Frontend ───────────────────────────────────────────────────────────────
+
+app.use('/*', serveStatic({ root: join(__dirname, '../../frontend/dist') }))
+
+const PORT = Number(process.env.PORT ?? 3000)
+serve({ fetch: app.fetch, port: PORT }, () => {
+  console.log(`[DIVIDE] Server running on http://localhost:${PORT}`)
+})

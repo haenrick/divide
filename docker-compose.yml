@@ -1,0 +1,13 @@
+services:
+  divide:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8042:3000"        # linke Seite = Pi-Port, rechts = Container-intern
+    volumes:
+      - divide-data:/data  # SQLite-Datenbank überlebt Container-Updates
+    env_file:
+      - .env
+
+volumes:
+  divide-data:
