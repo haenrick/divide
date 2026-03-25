@@ -45,6 +45,7 @@
     expAmount = ''
     expDesc = ''
     balances = await api.balances.get(activity.id)
+    window.umami?.track('ausgabe-hinzugefuegt', { betrag: amount })
   }
 
   async function removeExpense(id: number) {

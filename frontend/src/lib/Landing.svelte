@@ -20,7 +20,11 @@
     try {
       const activity = await api.rooms.create(name.trim(), email.trim() || undefined)
       saveRoom(activity.room_token!, activity.name)
-      if (email.trim()) emailSent = true
+      if (email.trim()) {
+        emailSent = true
+        window.umami?.track('email-gesendet')
+      }
+      window.umami?.track('gruppe-erstellt')
       window.location.hash = `/r/${activity.room_token}`
       onRoom(activity)
     } catch {
@@ -34,6 +38,7 @@
     try {
       const activity = await api.rooms.get(token)
       saveRoom(token, activity.name)
+      window.umami?.track('gruppe-besucht')
       window.location.hash = `/r/${token}`
       onRoom(activity)
     } catch {
