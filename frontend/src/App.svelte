@@ -3,7 +3,7 @@
   import Landing from './lib/Landing.svelte'
   import ActivityList from './lib/ActivityList.svelte'
   import ActivityDetail from './lib/ActivityDetail.svelte'
-  import { api, AuthError, type Activity, type AppConfig } from './lib/api'
+  import { api, setRoomToken, AuthError, type Activity, type AppConfig } from './lib/api'
   import { saveRoom } from './lib/rooms'
 
   let appConfig = $state<AppConfig | null>(null)
@@ -38,7 +38,7 @@
 
   function selectRoom(activity: Activity | null) {
     selected = activity
-    api.setRoomToken(activity?.room_token ?? null)
+    setRoomToken(activity?.room_token ?? null)
   }
 
   async function loadFromHash() {
