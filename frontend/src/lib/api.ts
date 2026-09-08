@@ -7,6 +7,7 @@ export type Expense = { id: number; activity_id: number; paid_by: number; paid_b
 export type Balance = { id: number; name: string; paid: number; share: number; net: number }
 export type Settlement = { from: string; to: string; amount: number }
 export type Balances = { balances: Balance[]; settlements: Settlement[]; total: number }
+export type AdminActivity = Activity & { participant_count: number; expense_count: number; total: number }
 
 export class AuthError extends Error {}
 
@@ -60,5 +61,13 @@ export const api = {
   },
   balances: {
     get: (activityId: number) => req<Balances>(`/activities/${activityId}/balances`),
+  },
+  admin: {
+    login:  (password: string) => req<void>('/admin/login',  { method: 'POST', body: JSON.stringify({ password }) }),
+    logout: ()                 => req<void>('/admin/logout', { method: 'POST' }),
+    activities: {
+      list:   ()           => req<AdminActivity[]>('/admin/activities'),
+      delete: (id: number) => req<void>(`/admin/activities/${id}`, { method: 'DELETE' }),
+    },
   },
 }

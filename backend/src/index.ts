@@ -17,13 +17,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
 mkdirSync(join(__dirname, '../../data'), { recursive: true })
 
-const PASSWORD    = process.env.PASSWORD    ?? 'geheim'
-const JWT_SECRET  = process.env.JWT_SECRET  ?? 'dev-secret'
-const MODE        = process.env.MODE        ?? 'selfhosted'
-const PORT        = Number(process.env.PORT ?? 3000)
-const APP_URL     = process.env.APP_URL     ?? 'https://divide-it.app'
-const RESEND_KEY  = process.env.RESEND_API_KEY
-const RESEND_FROM = process.env.RESEND_FROM ?? 'DIVIDE <noreply@divide-it.app>'
+const PASSWORD       = process.env.PASSWORD       ?? 'geheim'
+const JWT_SECRET     = process.env.JWT_SECRET     ?? 'dev-secret'
+const MODE           = process.env.MODE           ?? 'selfhosted'
+const PORT           = Number(process.env.PORT ?? 3000)
+const APP_URL        = process.env.APP_URL        ?? 'https://divide-it.app'
+const RESEND_KEY     = process.env.RESEND_API_KEY
+const RESEND_FROM    = process.env.RESEND_FROM    ?? 'DIVIDE <noreply@divide-it.app>'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
 
 const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 
@@ -65,7 +66,7 @@ if (MODE === 'selfhosted') {
   })
 
   app.use('/api/*', async (c, next) => {
-    if (c.req.path === '/api/config') return next()
+    if (c.req.path === '/api/config' || c.req.path.startsWith('/api/admin/')) return next()
     const token = getCookie(c, 'token')
     if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
     try {
@@ -76,6 +77,56 @@ if (MODE === 'selfhosted') {
     }
   })
 }
+
+// ─── Admin (Übersicht über alle Gruppen, unabhängig vom MODE) ────────────────
+// Eigenes Passwort/JWT, getrennt von der normalen Auth bzw. den Room-Tokens.
+
+app.post('/api/admin/login', async (c) => {
+  if (!ADMIN_PASSWORD) return c.json({ error: 'Admin-Zugang nicht konfiguriert' }, 503)
+  const { password } = await c.req.json()
+  if (password !== ADMIN_PASSWORD) return c.json({ error: 'Falsches Passwort' }, 401)
+  const token = await sign({ sub: 'admin', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12 }, JWT_SECRET)
+  setCookie(c, 'admin_token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 12 })
+  return c.json({ ok: true })
+})
+
+app.post('/api/admin/logout', (c) => {
+  deleteCookie(c, 'admin_token', { path: '/' })
+  return c.json({ ok: true })
+})
+
+app.use('/api/admin/*', async (c, next) => {
+  if (c.req.path === '/api/admin/login') return next()
+  const token = getCookie(c, 'admin_token')
+  if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
+  try {
+    const payload = await verify(token, JWT_SECRET, 'HS256')
+    if (payload.sub !== 'admin') throw new Error('not admin')
+    await next()
+  } catch {
+    return c.json({ error: 'Session abgelaufen' }, 401)
+  }
+})
+
+app.get('/api/admin/activities', (c) => {
+  const activities = db.prepare(`
+    SELECT a.*,
+      COUNT(DISTINCT p.id) as participant_count,
+      COUNT(DISTINCT e.id) as expense_count,
+      COALESCE(SUM(e.amount), 0) as total
+    FROM activities a
+    LEFT JOIN participants p ON p.activity_id = a.id
+    LEFT JOIN expenses e ON e.activity_id = a.id
+    GROUP BY a.id
+    ORDER BY a.created_at DESC
+  `).all()
+  return c.json(activities)
+})
+
+app.delete('/api/admin/activities/:id', (c) => {
+  db.prepare('DELETE FROM activities WHERE id = ?').run(Number(c.req.param('id')))
+  return c.json({ ok: true })
+})
 
 // ─── Rooms (saas) ────────────────────────────────────────────────────────────
 

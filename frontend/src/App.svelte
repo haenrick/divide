@@ -3,12 +3,20 @@
   import Landing from './lib/Landing.svelte'
   import ActivityList from './lib/ActivityList.svelte'
   import ActivityDetail from './lib/ActivityDetail.svelte'
+  import Admin from './lib/Admin.svelte'
   import { api, setRoomToken, AuthError, type Activity, type AppConfig } from './lib/api'
   import { saveRoom } from './lib/rooms'
 
   let appConfig = $state<AppConfig | null>(null)
   let authed    = $state<boolean | null>(null)
   let selected  = $state<Activity | null>(null)
+
+  // ─── Admin-Route (#/admin), unabhängig vom sonstigen Routing ──────────────
+
+  let isAdminRoute = $state(window.location.hash.replace('#', '') === '/admin')
+  window.addEventListener('hashchange', () => {
+    isAdminRoute = window.location.hash.replace('#', '') === '/admin'
+  })
 
   // ─── Selfhosted: Auth prüfen ───────────────────────────────────────────────
 
@@ -73,8 +81,12 @@
   })
 </script>
 
+<!-- ─── Admin ───────────────────────────────────────────────────────────── -->
+{#if isAdminRoute}
+  <Admin />
+
 <!-- ─── Loading ─────────────────────────────────────────────────────────── -->
-{#if appConfig === null}
+{:else if appConfig === null}
   <div class="loading">initializing...</div>
 
 <!-- ─── SaaS Mode ─────────────────────────────────────────────────────── -->
