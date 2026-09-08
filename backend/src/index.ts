@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context, Next } from 'hono'
 import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -26,8 +27,18 @@ const RESEND_FROM = process.env.RESEND_FROM ?? 'DIVIDE <noreply@divide-it.app>'
 
 const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 
+// Frontend und Backend laufen immer same-origin (Docker: gemeinsam ausgeliefert;
+// Dev: Vite-Proxy) — Cross-Origin-Zugriff ist nur nötig, wenn explizit eine
+// andere Origin per ALLOWED_ORIGINS konfiguriert wird. "*" + Credentials ist
+// spec-widrig und wird von Browsern ohnehin ignoriert, daher feste Allowlist.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+
 const app = new Hono()
-app.use('*', cors({ origin: '*', credentials: true }))
+app.use('*', cors({
+  origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : '',
+  credentials: true,
+}))
 
 // Beim Start abgelaufene Rooms löschen, danach täglich
 cleanupExpiredRooms()
@@ -107,14 +118,53 @@ app.get('/api/rooms/:token', (c) => {
   return c.json(activity)
 })
 
+// ─── Room-Isolation (nur saas) ───────────────────────────────────────────────
+// Jede Aktivität ist per Room-Token vor fremdem Zugriff geschützt.
+// Der Client schickt den Token im Header X-Room-Token mit.
+
+function activityIdOfParticipant(id: number) {
+  const row = db.prepare('SELECT activity_id FROM participants WHERE id = ?').get(id) as { activity_id: number } | undefined
+  return row?.activity_id
+}
+
+function activityIdOfExpense(id: number) {
+  const row = db.prepare('SELECT activity_id FROM expenses WHERE id = ?').get(id) as { activity_id: number } | undefined
+  return row?.activity_id
+}
+
+function requireRoomToken(getActivityId: (c: Context) => number | undefined) {
+  return async (c: Context, next: Next) => {
+    const activityId = getActivityId(c)
+    if (!activityId) return c.json({ error: 'Nicht gefunden' }, 404)
+    const token = c.req.header('X-Room-Token')
+    if (!token) return c.json({ error: 'Room-Token fehlt' }, 401)
+    const room = db.prepare(
+      `SELECT id FROM activities WHERE id = ? AND room_token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))`
+    ).get(activityId, token)
+    if (!room) return c.json({ error: 'Ungültiger Room-Token' }, 403)
+    await next()
+  }
+}
+
+if (MODE === 'saas') {
+  app.use('/api/activities/:id', requireRoomToken((c) => Number(c.req.param('id'))))
+  app.use('/api/activities/:id/*', requireRoomToken((c) => Number(c.req.param('id'))))
+  app.use('/api/participants/:id', requireRoomToken((c) => activityIdOfParticipant(Number(c.req.param('id')))))
+  app.use('/api/expenses/:id', requireRoomToken((c) => activityIdOfExpense(Number(c.req.param('id')))))
+}
+
 // ─── Activities ──────────────────────────────────────────────────────────────
 
 app.get('/api/activities', (c) => {
+  // Globales Listing gibt es nur im selfhosted-Modus — im saas-Modus würde es
+  // fremde Gruppen aller Nutzer offenlegen.
+  if (MODE === 'saas') return c.json({ error: 'Nicht verfügbar' }, 403)
   const activities = db.prepare('SELECT * FROM activities ORDER BY created_at DESC').all()
   return c.json(activities)
 })
 
 app.post('/api/activities', async (c) => {
+  if (MODE === 'saas') return c.json({ error: 'Nicht verfügbar, nutze /api/rooms' }, 403)
   const { name } = await c.req.json()
   if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
   const result = db.prepare('INSERT INTO activities (name) VALUES (?)').run(name.trim())

@@ -8,6 +8,8 @@ services:
       - divide-data:/data
     env_file:
       - .env
+    mem_limit: 128m
+    memswap_limit: 128m
 
 volumes:
   divide-data:

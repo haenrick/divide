@@ -36,16 +36,22 @@
     return match ? match[1] : null
   }
 
+  function selectRoom(activity: Activity | null) {
+    selected = activity
+    api.setRoomToken(activity?.room_token ?? null)
+  }
+
   async function loadFromHash() {
     const token = getTokenFromHash()
-    if (!token) { selected = null; return }
+    if (!token) { selectRoom(null); return }
     try {
-      selected = await api.rooms.get(token)
-      saveRoom(token, selected.name)
+      const activity = await api.rooms.get(token)
+      selectRoom(activity)
+      saveRoom(token, activity.name)
     } catch {
       // Token ungültig oder abgelaufen → zurück zur Landing
       window.location.hash = ''
-      selected = null
+      selectRoom(null)
     }
   }
 
@@ -76,10 +82,10 @@
   {#if selected}
     <ActivityDetail
       activity={selected}
-      onBack={() => { window.location.hash = ''; selected = null }}
+      onBack={() => { window.location.hash = ''; selectRoom(null) }}
     />
   {:else}
-    <Landing onRoom={(a) => selected = a} />
+    <Landing onRoom={selectRoom} />
   {/if}
 
 <!-- ─── Selfhosted Mode ────────────────────────────────────────────────── -->

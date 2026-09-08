@@ -10,9 +10,18 @@ export type Balances = { balances: Balance[]; settlements: Settlement[]; total: 
 
 export class AuthError extends Error {}
 
+// Im saas-Modus identifiziert der Room-Token die aktive Gruppe gegenüber dem
+// Backend (siehe requireRoomToken in backend/src/index.ts).
+let roomToken: string | null = null
+export function setRoomToken(token: string | null) {
+  roomToken = token
+}
+
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (roomToken) headers['X-Room-Token'] = roomToken
   const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     credentials: 'include',
     ...options,
   })
