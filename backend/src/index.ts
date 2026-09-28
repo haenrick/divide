@@ -6,7 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import { sign, verify } from 'hono/jwt'
 import { mkdirSync } from 'fs'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash, timingSafeEqual } from 'crypto'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
@@ -35,7 +35,52 @@ const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
   .split(',').map(s => s.trim()).filter(Boolean)
 
+if (MODE === 'saas' && (JWT_SECRET === 'dev-secret' || !process.env.JWT_SECRET)) {
+  console.warn('[DIVIDE] WARNUNG: JWT_SECRET ist nicht gesetzt – Admin-Cookies wären fälschbar!')
+}
+
+// Zeitkonstanter Passwortvergleich (SHA-256 gleicht die Längen an)
+function safeEqual(a: string, b: string) {
+  const ha = createHash('sha256').update(String(a)).digest()
+  const hb = createHash('sha256').update(String(b)).digest()
+  return timingSafeEqual(ha, hb)
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!))
+}
+
+// Einfaches In-Memory-Rate-Limit (ein Prozess). Hinter einem Reverse-Proxy zählt
+// der letzte X-Forwarded-For-Eintrag, den der Proxy selbst angehängt hat.
+function clientIp(c: Context) {
+  const xff = c.req.header('x-forwarded-for')
+  return xff ? xff.split(',').pop()!.trim() : 'local'
+}
+
+function rateLimit(name: string, limit: number, windowMs: number) {
+  const hits = new Map<string, { n: number; reset: number }>()
+  return async (c: Context, next: Next) => {
+    const now = Date.now()
+    const key = clientIp(c)
+    let h = hits.get(key)
+    if (!h || h.reset <= now) { h = { n: 0, reset: now + windowMs }; hits.set(key, h) }
+    if (++h.n > limit) {
+      c.header('Retry-After', String(Math.ceil((h.reset - now) / 1000)))
+      return c.json({ error: 'Zu viele Anfragen, bitte kurz warten' }, 429)
+    }
+    if (hits.size > 10000) for (const [k, v] of hits) if (v.reset <= now) hits.delete(k)
+    await next()
+  }
+}
+
+function isValidAmount(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e9
+}
+
 const app = new Hono()
+app.use('/api/login', rateLimit('login', 10, 3 * 60_000))
+app.use('/api/admin/login', rateLimit('admin-login', 10, 3 * 60_000))
+app.post('/api/rooms', rateLimit('rooms', 20, 60 * 60_000))
 app.use('*', cors({
   origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : '',
   credentials: true,
@@ -43,7 +88,7 @@ app.use('*', cors({
 
 // Beim Start abgelaufene Rooms löschen, danach täglich
 cleanupExpiredRooms()
-setInterval(cleanupExpiredRooms, 24 * 60 * 60 * 1000)
+setInterval(cleanupExpiredRooms, 24 * 60 * 60 * 1000).unref()
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -53,8 +98,8 @@ app.get('/api/config', (c) => c.json({ mode: MODE }))
 
 if (MODE === 'selfhosted') {
   app.post('/api/login', async (c) => {
-    const { password } = await c.req.json()
-    if (password !== PASSWORD) return c.json({ error: 'Falsches Passwort' }, 401)
+    const { password } = await c.req.json().catch(() => ({ password: '' }))
+    if (!safeEqual(password, PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
     const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
     setCookie(c, 'token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30 })
     return c.json({ ok: true })
@@ -83,8 +128,8 @@ if (MODE === 'selfhosted') {
 
 app.post('/api/admin/login', async (c) => {
   if (!ADMIN_PASSWORD) return c.json({ error: 'Admin-Zugang nicht konfiguriert' }, 503)
-  const { password } = await c.req.json()
-  if (password !== ADMIN_PASSWORD) return c.json({ error: 'Falsches Passwort' }, 401)
+  const { password } = await c.req.json().catch(() => ({ password: '' }))
+  if (!safeEqual(password, ADMIN_PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
   const token = await sign({ sub: 'admin', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12 }, JWT_SECRET)
   setCookie(c, 'admin_token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 12 })
   return c.json({ ok: true })
@@ -133,7 +178,7 @@ app.delete('/api/admin/activities/:id', (c) => {
 app.post('/api/rooms', async (c) => {
   const { name, email } = await c.req.json()
   if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
-  const token = randomBytes(5).toString('hex')
+  const token = randomBytes(8).toString('hex')
   const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
   const result = db.prepare(
     'INSERT INTO activities (name, room_token, expires_at) VALUES (?, ?, ?)'
@@ -149,7 +194,7 @@ app.post('/api/rooms', async (c) => {
       html: `<div style="background:#000;color:#00ff88;font-family:monospace;padding:32px;max-width:480px">
         <div style="font-size:24px;font-weight:700;letter-spacing:0.2em;margin-bottom:24px">DIVIDE_</div>
         <div style="color:#aaa;margin-bottom:8px">// dein link zur gruppe</div>
-        <div style="color:#00ff88;font-size:18px;font-weight:700;margin-bottom:24px">${name.trim()}</div>
+        <div style="color:#00ff88;font-size:18px;font-weight:700;margin-bottom:24px">${escapeHtml(name.trim())}</div>
         <a href="${url}" style="display:block;background:#00ff88;color:#000;text-decoration:none;padding:12px 20px;font-weight:700;letter-spacing:2px;margin-bottom:24px">&gt; gruppe öffnen</a>
         <div style="color:#333;font-size:11px;letter-spacing:1px">${url}</div>
         <div style="color:#222;font-size:10px;margin-top:24px;letter-spacing:1px">// gruppe wird nach 30 tagen automatisch gelöscht</div>
@@ -263,7 +308,10 @@ app.get('/api/activities/:id/expenses', (c) => {
 app.post('/api/activities/:id/expenses', async (c) => {
   const activity_id = Number(c.req.param('id'))
   const { paid_by, amount, description } = await c.req.json()
-  if (!paid_by || !amount || amount <= 0) return c.json({ error: 'Invalid expense' }, 400)
+  if (!Number.isInteger(paid_by) || !isValidAmount(amount)) return c.json({ error: 'Invalid expense' }, 400)
+  if (typeof (description ?? '') !== 'string' || (description ?? '').length > 200) return c.json({ error: 'Invalid expense' }, 400)
+  const payer = db.prepare('SELECT id FROM participants WHERE id = ? AND activity_id = ?').get(paid_by, activity_id)
+  if (!payer) return c.json({ error: 'Zahler gehört nicht zu dieser Gruppe' }, 400)
   const result = db.prepare(
     'INSERT INTO expenses (activity_id, paid_by, amount, description) VALUES (?, ?, ?, ?)'
   ).run(activity_id, paid_by, amount, description ?? '')
@@ -323,6 +371,10 @@ app.get('/api/activities/:id/balances', (c) => {
 
 app.use('/*', serveStatic({ root: join(__dirname, '../../frontend/dist') }))
 
-serve({ fetch: app.fetch, port: PORT }, () => {
-  console.log(`[DIVIDE] Server running on http://localhost:${PORT} (mode: ${MODE})`)
-})
+export default app
+
+if (process.env.NODE_ENV !== 'test') {
+  serve({ fetch: app.fetch, port: PORT }, () => {
+    console.log(`[DIVIDE] Server running on http://localhost:${PORT} (mode: ${MODE})`)
+  })
+}
