@@ -1,6 +1,6 @@
 services:
   divide:
-    image: ghcr.io/haenrick/divide:saas
+    image: ghcr.io/haenrick/divide:latest
     restart: unless-stopped
     ports:
       - "3000:3000"
