@@ -51,10 +51,13 @@ test('Ausgaben: Zahler muss zur Gruppe gehören, Betrag muss gültige Zahl sein'
   const post = (body: unknown) => call(`/api/activities/${a.id}/expenses`, json(body, a.h))
   assert.equal((await post({ paid_by: anna, amount: 12.5, description: 'Pizza' })).status, 201)
   assert.equal((await post({ paid_by: bob, amount: 5 })).status, 400)          // fremder Zahler
+  assert.equal((await post({ paid_by: 9999, amount: 5, description: 'Test' })).status, 400) // unbekannter Zahler (#2)
   assert.equal((await post({ paid_by: anna, amount: '5' })).status, 400)       // String
   assert.equal((await post({ paid_by: anna, amount: -1 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 1e12 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 5, description: 'x'.repeat(201) })).status, 400)
+  const expenses = await (await call(`/api/activities/${a.id}/expenses`, { headers: a.h })).json() as unknown[]
+  assert.equal(expenses.length, 1)                                              // nur die gültige Ausgabe
 })
 
 test('Admin-Login: falsches Passwort 401, richtiges 200, Rate-Limit greift', async () => {
