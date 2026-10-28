@@ -65,11 +65,21 @@
 
   // ─── Init ─────────────────────────────────────────────────────────────────
 
+  // Analytics nur im saas-Modus, selfhosted-Instanzen senden nichts nach außen
+  function loadUmami() {
+    const script = document.createElement('script')
+    script.defer = true
+    script.src = 'https://umami.divide-it.app/script.js'
+    script.dataset.websiteId = '2696df06-4443-492f-b411-b617a2caabda'
+    document.head.appendChild(script)
+  }
+
   $effect(() => {
     api.config.get().then(async (cfg) => {
       appConfig = cfg
 
       if (cfg.mode === 'saas') {
+        loadUmami()
         // Hash-Routing initialisieren
         await loadFromHash()
         window.addEventListener('hashchange', loadFromHash)
