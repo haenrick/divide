@@ -1,67 +1,266 @@
 import { Hono } from 'hono'
+import type { Context, Next } from 'hono'
 import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import { sign, verify } from 'hono/jwt'
 import { mkdirSync } from 'fs'
+import { randomBytes, createHash, timingSafeEqual } from 'crypto'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
-import db from './db.js'
+import { Resend } from 'resend'
+import db, { cleanupExpiredRooms } from './db.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
 mkdirSync(join(__dirname, '../../data'), { recursive: true })
 
-const PASSWORD = process.env.PASSWORD ?? 'geheim'
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret'
+const PASSWORD       = process.env.PASSWORD       ?? 'geheim'
+const JWT_SECRET     = process.env.JWT_SECRET     ?? 'dev-secret'
+const MODE           = process.env.MODE           ?? 'selfhosted'
+const PORT           = Number(process.env.PORT ?? 3000)
+const APP_URL        = process.env.APP_URL        ?? 'https://divide-it.app'
+const RESEND_KEY     = process.env.RESEND_API_KEY
+const RESEND_FROM    = process.env.RESEND_FROM    ?? 'DIVIDE <noreply@divide-it.app>'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
+
+const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
+
+// Frontend und Backend laufen immer same-origin (Docker: gemeinsam ausgeliefert;
+// Dev: Vite-Proxy) — Cross-Origin-Zugriff ist nur nötig, wenn explizit eine
+// andere Origin per ALLOWED_ORIGINS konfiguriert wird. "*" + Credentials ist
+// spec-widrig und wird von Browsern ohnehin ignoriert, daher feste Allowlist.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+
+if (MODE === 'saas' && (JWT_SECRET === 'dev-secret' || !process.env.JWT_SECRET)) {
+  console.warn('[DIVIDE] WARNUNG: JWT_SECRET ist nicht gesetzt – Admin-Cookies wären fälschbar!')
+}
+
+// Zeitkonstanter Passwortvergleich (SHA-256 gleicht die Längen an)
+function safeEqual(a: string, b: string) {
+  const ha = createHash('sha256').update(String(a)).digest()
+  const hb = createHash('sha256').update(String(b)).digest()
+  return timingSafeEqual(ha, hb)
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!))
+}
+
+// Einfaches In-Memory-Rate-Limit (ein Prozess). Hinter einem Reverse-Proxy zählt
+// der letzte X-Forwarded-For-Eintrag, den der Proxy selbst angehängt hat.
+function clientIp(c: Context) {
+  const xff = c.req.header('x-forwarded-for')
+  return xff ? xff.split(',').pop()!.trim() : 'local'
+}
+
+function rateLimit(name: string, limit: number, windowMs: number) {
+  const hits = new Map<string, { n: number; reset: number }>()
+  return async (c: Context, next: Next) => {
+    const now = Date.now()
+    const key = clientIp(c)
+    let h = hits.get(key)
+    if (!h || h.reset <= now) { h = { n: 0, reset: now + windowMs }; hits.set(key, h) }
+    if (++h.n > limit) {
+      c.header('Retry-After', String(Math.ceil((h.reset - now) / 1000)))
+      return c.json({ error: 'Zu viele Anfragen, bitte kurz warten' }, 429)
+    }
+    if (hits.size > 10000) for (const [k, v] of hits) if (v.reset <= now) hits.delete(k)
+    await next()
+  }
+}
+
+function isValidAmount(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e9
+}
 
 const app = new Hono()
-app.use('*', cors({ origin: '*', credentials: true }))
+app.use('/api/login', rateLimit('login', 10, 3 * 60_000))
+app.use('/api/admin/login', rateLimit('admin-login', 10, 3 * 60_000))
+app.post('/api/rooms', rateLimit('rooms', 20, 60 * 60_000))
+app.use('*', cors({
+  origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : '',
+  credentials: true,
+}))
 
-// ─── Auth ───────────────────────────────────────────────────────────────────
+// Beim Start abgelaufene Rooms löschen, danach täglich
+cleanupExpiredRooms()
+setInterval(cleanupExpiredRooms, 24 * 60 * 60 * 1000).unref()
 
-app.post('/api/login', async (c) => {
-  const { password } = await c.req.json()
-  if (password !== PASSWORD) {
-    return c.json({ error: 'Falsches Passwort' }, 401)
-  }
-  const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
-  setCookie(c, 'token', token, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30,
+// ─── Config ─────────────────────────────────────────────────────────────────
+
+app.get('/api/config', (c) => c.json({ mode: MODE }))
+
+// ─── Auth (nur selfhosted) ───────────────────────────────────────────────────
+
+if (MODE === 'selfhosted') {
+  app.post('/api/login', async (c) => {
+    const { password } = await c.req.json().catch(() => ({ password: '' }))
+    if (!safeEqual(password, PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
+    const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
+    setCookie(c, 'token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30 })
+    return c.json({ ok: true })
   })
+
+  app.post('/api/logout', (c) => {
+    deleteCookie(c, 'token', { path: '/' })
+    return c.json({ ok: true })
+  })
+
+  app.use('/api/*', async (c, next) => {
+    if (c.req.path === '/api/config' || c.req.path.startsWith('/api/admin/')) return next()
+    const token = getCookie(c, 'token')
+    if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
+    try {
+      await verify(token, JWT_SECRET, 'HS256')
+      await next()
+    } catch {
+      return c.json({ error: 'Session abgelaufen' }, 401)
+    }
+  })
+}
+
+// ─── Admin (Übersicht über alle Gruppen, unabhängig vom MODE) ────────────────
+// Eigenes Passwort/JWT, getrennt von der normalen Auth bzw. den Room-Tokens.
+
+app.post('/api/admin/login', async (c) => {
+  if (!ADMIN_PASSWORD) return c.json({ error: 'Admin-Zugang nicht konfiguriert' }, 503)
+  const { password } = await c.req.json().catch(() => ({ password: '' }))
+  if (!safeEqual(password, ADMIN_PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
+  const token = await sign({ sub: 'admin', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12 }, JWT_SECRET)
+  setCookie(c, 'admin_token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 12 })
   return c.json({ ok: true })
 })
 
-app.post('/api/logout', (c) => {
-  deleteCookie(c, 'token', { path: '/' })
+app.post('/api/admin/logout', (c) => {
+  deleteCookie(c, 'admin_token', { path: '/' })
   return c.json({ ok: true })
 })
 
-// Auth middleware für alle weiteren /api Routen
-app.use('/api/*', async (c, next) => {
-  const token = getCookie(c, 'token')
+app.use('/api/admin/*', async (c, next) => {
+  if (c.req.path === '/api/admin/login') return next()
+  const token = getCookie(c, 'admin_token')
   if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
   try {
-    await verify(token, JWT_SECRET, 'HS256')
+    const payload = await verify(token, JWT_SECRET, 'HS256')
+    if (payload.sub !== 'admin') throw new Error('not admin')
     await next()
   } catch {
     return c.json({ error: 'Session abgelaufen' }, 401)
   }
 })
 
-// ─── Activities ────────────────────────────────────────────────────────────
+app.get('/api/admin/activities', (c) => {
+  const activities = db.prepare(`
+    SELECT a.*,
+      COUNT(DISTINCT p.id) as participant_count,
+      COUNT(DISTINCT e.id) as expense_count,
+      COALESCE(SUM(e.amount), 0) as total
+    FROM activities a
+    LEFT JOIN participants p ON p.activity_id = a.id
+    LEFT JOIN expenses e ON e.activity_id = a.id
+    GROUP BY a.id
+    ORDER BY a.created_at DESC
+  `).all()
+  return c.json(activities)
+})
+
+app.delete('/api/admin/activities/:id', (c) => {
+  db.prepare('DELETE FROM activities WHERE id = ?').run(Number(c.req.param('id')))
+  return c.json({ ok: true })
+})
+
+// ─── Rooms (saas) ────────────────────────────────────────────────────────────
+
+app.post('/api/rooms', async (c) => {
+  const { name, email } = await c.req.json()
+  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const token = randomBytes(8).toString('hex')
+  const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
+  const result = db.prepare(
+    'INSERT INTO activities (name, room_token, expires_at) VALUES (?, ?, ?)'
+  ).run(name.trim(), token, expires_at)
+  const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
+
+  if (email && resend) {
+    const url = `${APP_URL}/#/r/${token}`
+    resend.emails.send({
+      from: RESEND_FROM,
+      to: [email],
+      subject: `DIVIDE // ${name.trim()}`,
+      html: `<div style="background:#000;color:#00ff88;font-family:monospace;padding:32px;max-width:480px">
+        <div style="font-size:24px;font-weight:700;letter-spacing:0.2em;margin-bottom:24px">DIVIDE_</div>
+        <div style="color:#aaa;margin-bottom:8px">// dein link zur gruppe</div>
+        <div style="color:#00ff88;font-size:18px;font-weight:700;margin-bottom:24px">${escapeHtml(name.trim())}</div>
+        <a href="${url}" style="display:block;background:#00ff88;color:#000;text-decoration:none;padding:12px 20px;font-weight:700;letter-spacing:2px;margin-bottom:24px">&gt; gruppe öffnen</a>
+        <div style="color:#333;font-size:11px;letter-spacing:1px">${url}</div>
+        <div style="color:#222;font-size:10px;margin-top:24px;letter-spacing:1px">// gruppe wird nach 30 tagen automatisch gelöscht</div>
+      </div>`,
+    }).catch(() => {}) // Email-Fehler sind nicht kritisch
+  }
+
+  return c.json(activity, 201)
+})
+
+app.get('/api/rooms/:token', (c) => {
+  const token = c.req.param('token')
+  const activity = db.prepare(
+    `SELECT * FROM activities WHERE room_token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))`
+  ).get(token)
+  if (!activity) return c.json({ error: 'Room nicht gefunden oder abgelaufen' }, 404)
+  return c.json(activity)
+})
+
+// ─── Room-Isolation (nur saas) ───────────────────────────────────────────────
+// Jede Aktivität ist per Room-Token vor fremdem Zugriff geschützt.
+// Der Client schickt den Token im Header X-Room-Token mit.
+
+function activityIdOfParticipant(id: number) {
+  const row = db.prepare('SELECT activity_id FROM participants WHERE id = ?').get(id) as { activity_id: number } | undefined
+  return row?.activity_id
+}
+
+function activityIdOfExpense(id: number) {
+  const row = db.prepare('SELECT activity_id FROM expenses WHERE id = ?').get(id) as { activity_id: number } | undefined
+  return row?.activity_id
+}
+
+function requireRoomToken(getActivityId: (c: Context) => number | undefined) {
+  return async (c: Context, next: Next) => {
+    const activityId = getActivityId(c)
+    if (!activityId) return c.json({ error: 'Nicht gefunden' }, 404)
+    const token = c.req.header('X-Room-Token')
+    if (!token) return c.json({ error: 'Room-Token fehlt' }, 401)
+    const room = db.prepare(
+      `SELECT id FROM activities WHERE id = ? AND room_token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))`
+    ).get(activityId, token)
+    if (!room) return c.json({ error: 'Ungültiger Room-Token' }, 403)
+    await next()
+  }
+}
+
+if (MODE === 'saas') {
+  app.use('/api/activities/:id', requireRoomToken((c) => Number(c.req.param('id'))))
+  app.use('/api/activities/:id/*', requireRoomToken((c) => Number(c.req.param('id'))))
+  app.use('/api/participants/:id', requireRoomToken((c) => activityIdOfParticipant(Number(c.req.param('id')))))
+  app.use('/api/expenses/:id', requireRoomToken((c) => activityIdOfExpense(Number(c.req.param('id')))))
+}
+
+// ─── Activities ──────────────────────────────────────────────────────────────
 
 app.get('/api/activities', (c) => {
+  // Globales Listing gibt es nur im selfhosted-Modus — im saas-Modus würde es
+  // fremde Gruppen aller Nutzer offenlegen.
+  if (MODE === 'saas') return c.json({ error: 'Nicht verfügbar' }, 403)
   const activities = db.prepare('SELECT * FROM activities ORDER BY created_at DESC').all()
   return c.json(activities)
 })
 
 app.post('/api/activities', async (c) => {
+  if (MODE === 'saas') return c.json({ error: 'Nicht verfügbar, nutze /api/rooms' }, 403)
   const { name } = await c.req.json()
   if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
   const result = db.prepare('INSERT INTO activities (name) VALUES (?)').run(name.trim())
@@ -75,7 +274,7 @@ app.delete('/api/activities/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Participants ───────────────────────────────────────────────────────────
+// ─── Participants ────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/participants', (c) => {
   const id = Number(c.req.param('id'))
@@ -95,7 +294,7 @@ app.delete('/api/participants/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Expenses ───────────────────────────────────────────────────────────────
+// ─── Expenses ────────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/expenses', (c) => {
   const id = Number(c.req.param('id'))
@@ -109,7 +308,10 @@ app.get('/api/activities/:id/expenses', (c) => {
 app.post('/api/activities/:id/expenses', async (c) => {
   const activity_id = Number(c.req.param('id'))
   const { paid_by, amount, description } = await c.req.json()
-  if (!paid_by || !amount || amount <= 0) return c.json({ error: 'Invalid expense' }, 400)
+  if (!Number.isInteger(paid_by) || !isValidAmount(amount)) return c.json({ error: 'Invalid expense' }, 400)
+  if (typeof (description ?? '') !== 'string' || (description ?? '').length > 200) return c.json({ error: 'Invalid expense' }, 400)
+  const payer = db.prepare('SELECT id FROM participants WHERE id = ? AND activity_id = ?').get(paid_by, activity_id)
+  if (!payer) return c.json({ error: 'Zahler gehört nicht zu dieser Gruppe' }, 400)
   const result = db.prepare(
     'INSERT INTO expenses (activity_id, paid_by, amount, description) VALUES (?, ?, ?, ?)'
   ).run(activity_id, paid_by, amount, description ?? '')
@@ -124,7 +326,7 @@ app.delete('/api/expenses/:id', (c) => {
   return c.json({ ok: true })
 })
 
-// ─── Balances ───────────────────────────────────────────────────────────────
+// ─── Balances ────────────────────────────────────────────────────────────────
 
 app.get('/api/activities/:id/balances', (c) => {
   const id = Number(c.req.param('id'))
@@ -141,7 +343,7 @@ app.get('/api/activities/:id/balances', (c) => {
   for (const e of expenses) net[e.paid_by] = (net[e.paid_by] ?? 0) + e.amount
 
   const creditors = participants.filter(p => net[p.id] > 0.005).map(p => ({ ...p, amount: net[p.id] }))
-  const debtors = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
+  const debtors   = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
 
   const settlements: Array<{ from: string; to: string; amount: number }> = []
   let i = 0, j = 0
@@ -165,11 +367,14 @@ app.get('/api/activities/:id/balances', (c) => {
   })
 })
 
-// ─── Frontend ───────────────────────────────────────────────────────────────
+// ─── Frontend ────────────────────────────────────────────────────────────────
 
 app.use('/*', serveStatic({ root: join(__dirname, '../../frontend/dist') }))
 
-const PORT = Number(process.env.PORT ?? 3000)
-serve({ fetch: app.fetch, port: PORT }, () => {
-  console.log(`[DIVIDE] Server running on http://localhost:${PORT}`)
-})
+export default app
+
+if (process.env.NODE_ENV !== 'test') {
+  serve({ fetch: app.fetch, port: PORT }, () => {
+    console.log(`[DIVIDE] Server running on http://localhost:${PORT} (mode: ${MODE})`)
+  })
+}

@@ -45,6 +45,7 @@
     expAmount = ''
     expDesc = ''
     balances = await api.balances.get(activity.id)
+    window.umami?.track('ausgabe-hinzugefuegt', { betrag: amount })
   }
 
   async function removeExpense(id: number) {
@@ -55,6 +56,31 @@
 
   function fmt(n: number) { return n.toFixed(2).replace('.', ',') + ' €' }
 
+  // Share-Link
+  let copied = $state(false)
+  function shareLink() {
+    if (!activity.room_token) return
+    const url = `${window.location.origin}/#/r/${activity.room_token}`
+    // Fallback für HTTP (kein HTTPS) oder ältere Browser
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        copied = true
+        setTimeout(() => copied = false, 2000)
+      })
+    } else {
+      const el = document.createElement('textarea')
+      el.value = url
+      el.style.position = 'fixed'
+      el.style.opacity = '0'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+      copied = true
+      setTimeout(() => copied = false, 2000)
+    }
+  }
+
   $effect(() => { load() })
 </script>
 
@@ -62,6 +88,11 @@
   <div class="back-row">
     <button class="back-btn" onclick={onBack}>← zurück</button>
     <span class="act-name">{activity.name}</span>
+    {#if activity.room_token}
+      <button class="share-btn" onclick={shareLink}>
+        {copied ? '✓ kopiert' : '⬡ teilen'}
+      </button>
+    {/if}
   </div>
 
   <!-- Participants -->
@@ -201,6 +232,7 @@
     align-items: center;
     gap: 12px;
     margin-bottom: 24px;
+    flex-wrap: wrap;
   }
   .back-btn {
     background: none;
@@ -214,7 +246,22 @@
     transition: all 0.15s;
   }
   .back-btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,0.08); }
-  .act-name { color: var(--green); font-size: 16px; font-weight: 700; letter-spacing: 2px; }
+  .act-name { color: var(--green); font-size: 16px; font-weight: 700; letter-spacing: 2px; flex: 1; }
+
+  .share-btn {
+    background: none;
+    border: 1px solid #2a2a2a;
+    color: #555;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+    margin-left: auto;
+  }
+  .share-btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,0.05); }
 
   .card {
     border: 1px solid var(--border);

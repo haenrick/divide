@@ -1,13 +1,25 @@
 <script lang="ts">
   import Login from './lib/Login.svelte'
+  import Landing from './lib/Landing.svelte'
   import ActivityList from './lib/ActivityList.svelte'
   import ActivityDetail from './lib/ActivityDetail.svelte'
-  import { api, AuthError, type Activity } from './lib/api'
+  import Admin from './lib/Admin.svelte'
+  import { api, setRoomToken, AuthError, type Activity, type AppConfig } from './lib/api'
+  import { saveRoom } from './lib/rooms'
 
-  let authed = $state<boolean | null>(null)  // null = noch unbekannt
-  let selected = $state<Activity | null>(null)
+  let appConfig = $state<AppConfig | null>(null)
+  let authed    = $state<boolean | null>(null)
+  let selected  = $state<Activity | null>(null)
 
-  // Beim Start prüfen ob Session noch gültig ist
+  // ─── Admin-Route (#/admin), unabhängig vom sonstigen Routing ──────────────
+
+  let isAdminRoute = $state(window.location.hash.replace('#', '') === '/admin')
+  window.addEventListener('hashchange', () => {
+    isAdminRoute = window.location.hash.replace('#', '') === '/admin'
+  })
+
+  // ─── Selfhosted: Auth prüfen ───────────────────────────────────────────────
+
   async function checkAuth() {
     try {
       await api.activities.list()
@@ -23,10 +35,83 @@
     selected = null
   }
 
-  $effect(() => { checkAuth() })
+  // ─── SaaS: URL-Hash Routing ───────────────────────────────────────────────
+  // Hash-Format: #/r/TOKEN
+
+  function getTokenFromHash(): string | null {
+    const hash = window.location.hash.replace('#', '')
+    const match = hash.match(/^\/r\/([a-f0-9]+)$/)
+    return match ? match[1] : null
+  }
+
+  function selectRoom(activity: Activity | null) {
+    selected = activity
+    setRoomToken(activity?.room_token ?? null)
+  }
+
+  async function loadFromHash() {
+    const token = getTokenFromHash()
+    if (!token) { selectRoom(null); return }
+    try {
+      const activity = await api.rooms.get(token)
+      selectRoom(activity)
+      saveRoom(token, activity.name)
+    } catch {
+      // Token ungültig oder abgelaufen → zurück zur Landing
+      window.location.hash = ''
+      selectRoom(null)
+    }
+  }
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
+
+  // Analytics nur im saas-Modus, selfhosted-Instanzen senden nichts nach außen
+  function loadUmami() {
+    const script = document.createElement('script')
+    script.defer = true
+    script.src = 'https://umami.divide-it.app/script.js'
+    script.dataset.websiteId = '2696df06-4443-492f-b411-b617a2caabda'
+    document.head.appendChild(script)
+  }
+
+  $effect(() => {
+    api.config.get().then(async (cfg) => {
+      appConfig = cfg
+
+      if (cfg.mode === 'saas') {
+        loadUmami()
+        // Hash-Routing initialisieren
+        await loadFromHash()
+        window.addEventListener('hashchange', loadFromHash)
+      } else {
+        // Selfhosted: Auth prüfen
+        await checkAuth()
+      }
+    })
+  })
 </script>
 
-{#if authed === null}
+<!-- ─── Admin ───────────────────────────────────────────────────────────── -->
+{#if isAdminRoute}
+  <Admin />
+
+<!-- ─── Loading ─────────────────────────────────────────────────────────── -->
+{:else if appConfig === null}
+  <div class="loading">initializing...</div>
+
+<!-- ─── SaaS Mode ─────────────────────────────────────────────────────── -->
+{:else if appConfig.mode === 'saas'}
+  {#if selected}
+    <ActivityDetail
+      activity={selected}
+      onBack={() => { window.location.hash = ''; selectRoom(null) }}
+    />
+  {:else}
+    <Landing onRoom={selectRoom} />
+  {/if}
+
+<!-- ─── Selfhosted Mode ────────────────────────────────────────────────── -->
+{:else if authed === null}
   <div class="loading">initializing...</div>
 
 {:else if !authed}
