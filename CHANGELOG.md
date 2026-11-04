@@ -7,15 +7,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] - 2026-11-04
+
+### Added
+- Admin-Übersicht unter `/#/admin`: alle Gruppen mit Teilnehmer- und Ausgabenzahl, Summe und Ablaufdatum, Löschen vor Ablauf. Eigenes `ADMIN_PASSWORD`, ohne Passwort deaktiviert (503)
+- API-Tests (`node:test`) für Room-Isolation, Validierung und Admin-Login
+
 ### Changed
 - **Achtung bei Updates:** Der Server startet nicht mehr, wenn `JWT_SECRET` (selfhosted oder mit `ADMIN_PASSWORD`) fehlt, kürzer als 32 Zeichen oder ein Platzhalter ist, wenn `PASSWORD` im selfhosted-Modus fehlt oder ein Platzhalter ist, oder wenn `MODE` weder `selfhosted` noch `saas` ist. Die Fehlermeldung beim Start nennt, was zu tun ist (#10, #11)
-
-### Security
-- Keine Fallbacks mehr auf die öffentlich bekannten Defaults `dev-secret`/`geheim`; ein unbekannter `MODE` schaltet nicht mehr die Zugangskontrolle der API ab (#10, #11)
-- `docker-compose.saas.yml` bindet den Port nur noch an `127.0.0.1`, weil Docker veröffentlichte Ports an `ufw` vorbei freigibt und so Caddy und das Rate-Limit umgangen werden konnten (#12)
+- Docker-Images werden nur noch aus `main` gebaut; die saas-Instanz nutzt `:latest`, der Branch `saas` ist stillgelegt
+- Umami-Analytics wird nur noch im saas-Modus geladen; selfhosted-Instanzen senden keine Tracking-Daten mehr
 
 ### Fixed
+- Room-Wechsel im saas-Modus setzte keinen `X-Room-Token`, alle Requests liefen in 401
 - Ungültiger oder leerer JSON-Body, JSON ohne Objekt und ein Name, der kein Text ist, führen auf den POST-Routen zu HTTP 400 statt 500. Fehlermeldungen für ungültige Namen und Ausgaben sind jetzt deutsch (#8)
+
+### Security
+- Room-Token wird im saas-Modus bei jedem Zugriff auf Gruppe, Teilnehmer und Ausgaben geprüft; vorher waren alle Gruppen über fortlaufende IDs ohne Token erreichbar. Globales Listing und Anlegen ohne Token sind gesperrt
+- CORS: feste Allowlist per `ALLOWED_ORIGINS` statt `*` mit Credentials; Standard ist kein Cross-Origin-Zugriff
+- Rate-Limits für Login, Admin-Login und Raumerstellung, zeitkonstanter Passwortvergleich, Validierung von Zahler, Betrag und Beschreibung, HTML-Escaping des Gruppennamens in der Einladungsmail
+- Dependency-Update hono 4.13.7 (sowie transitiv uuid/svix) gegen bekannte Advisories (u. a. ReDoS in der CORS-Middleware, GHSA-8j4g-w8fx-2239)
+- Keine Fallbacks mehr auf die öffentlich bekannten Defaults `dev-secret`/`geheim`; ein unbekannter `MODE` schaltet nicht mehr die Zugangskontrolle der API ab (#10, #11)
+- `docker-compose.saas.yml` bindet den Port nur noch an `127.0.0.1`, weil Docker veröffentlichte Ports an `ufw` vorbei freigibt und so Caddy und das Rate-Limit umgangen werden konnten (#12)
 
 ---
 
