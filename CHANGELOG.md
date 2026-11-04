@@ -7,6 +7,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Ausgaben akzeptieren nur noch Beträge mit höchstens 2 Nachkommastellen (sonst 400 `Ungültige Ausgabe`) (#3)
+- `share` in `/balances` ist jetzt der tatsächliche, auf Cent genaue Anteil jeder Person statt des ungerundeten Durchschnitts (#3)
+
+### Fixed
+- Salden und Settlements werden in ganzen Cent berechnet: Nettosummen ergeben exakt 0, kein Settlement überzahlt mehr um einen Cent. Restcent tragen die zuerst hinzugefügten Teilnehmer (#3)
+- Die Saldo-Berechnung summiert die Zahlungen in einem Durchlauf statt einmal pro Teilnehmer (#3)
+
 ---
 
 ## [0.3.0] - 2026-11-04
