@@ -3,7 +3,7 @@ services:
     image: ghcr.io/haenrick/divide:saas
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - divide-data:/data
     env_file:

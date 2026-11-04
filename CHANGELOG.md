@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Security
+- `docker-compose.saas.yml` bindet den Port nur noch an `127.0.0.1`, weil Docker veröffentlichte Ports an `ufw` vorbei freigibt und so Caddy und das Rate-Limit umgangen werden konnten (#12)
+
+---
+
 ## [0.2.1] - 2026-03-26
 
 ### Added
