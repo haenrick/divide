@@ -12,15 +12,22 @@ import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
 import { Resend } from 'resend'
 import db, { cleanupExpiredRooms } from './db.js'
+import { validateConfig } from './config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(__dirname, '../../.env') })
 mkdirSync(join(__dirname, '../../data'), { recursive: true })
 
-const PASSWORD       = process.env.PASSWORD       ?? 'geheim'
-const JWT_SECRET     = process.env.JWT_SECRET     ?? 'dev-secret'
-const MODE           = process.env.MODE           ?? 'selfhosted'
-const PORT           = Number(process.env.PORT ?? 3000)
+const { errors: configErrors, config: CONFIG } = validateConfig(process.env)
+if (!CONFIG) {
+  for (const e of configErrors) console.error(`[DIVIDE] FEHLER: ${e}`)
+  console.error('[DIVIDE] Start abgebrochen – Konfiguration in .env prüfen (siehe .env.example)')
+  process.exit(1)
+}
+
+const MODE           = CONFIG.mode
+const JWT_SECRET     = CONFIG.jwtSecret
+const PORT          = Number(process.env.PORT ?? 3000)
 const APP_URL        = process.env.APP_URL        ?? 'https://divide-it.app'
 const RESEND_KEY     = process.env.RESEND_API_KEY
 const RESEND_FROM    = process.env.RESEND_FROM    ?? 'DIVIDE <noreply@divide-it.app>'
@@ -34,10 +41,6 @@ const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 // spec-widrig und wird von Browsern ohnehin ignoriert, daher feste Allowlist.
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
   .split(',').map(s => s.trim()).filter(Boolean)
-
-if (MODE === 'saas' && (JWT_SECRET === 'dev-secret' || !process.env.JWT_SECRET)) {
-  console.warn('[DIVIDE] WARNUNG: JWT_SECRET ist nicht gesetzt – Admin-Cookies wären fälschbar!')
-}
 
 // Zeitkonstanter Passwortvergleich (SHA-256 gleicht die Längen an)
 function safeEqual(a: string, b: string) {
@@ -96,11 +99,13 @@ app.get('/api/config', (c) => c.json({ mode: MODE }))
 
 // ─── Auth (nur selfhosted) ───────────────────────────────────────────────────
 
-if (MODE === 'selfhosted') {
+if (CONFIG.mode === 'selfhosted') {
+  const { password: PASSWORD, jwtSecret: USER_SECRET } = CONFIG
+
   app.post('/api/login', async (c) => {
     const { password } = await c.req.json().catch(() => ({ password: '' }))
     if (!safeEqual(password, PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
-    const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, JWT_SECRET)
+    const token = await sign({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 }, USER_SECRET)
     setCookie(c, 'token', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30 })
     return c.json({ ok: true })
   })
@@ -115,7 +120,7 @@ if (MODE === 'selfhosted') {
     const token = getCookie(c, 'token')
     if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
     try {
-      await verify(token, JWT_SECRET, 'HS256')
+      await verify(token, USER_SECRET, 'HS256')
       await next()
     } catch {
       return c.json({ error: 'Session abgelaufen' }, 401)
@@ -127,7 +132,8 @@ if (MODE === 'selfhosted') {
 // Eigenes Passwort/JWT, getrennt von der normalen Auth bzw. den Room-Tokens.
 
 app.post('/api/admin/login', async (c) => {
-  if (!ADMIN_PASSWORD) return c.json({ error: 'Admin-Zugang nicht konfiguriert' }, 503)
+  // validateConfig erzwingt JWT_SECRET, sobald ADMIN_PASSWORD gesetzt ist
+  if (!ADMIN_PASSWORD || !JWT_SECRET) return c.json({ error: 'Admin-Zugang nicht konfiguriert' }, 503)
   const { password } = await c.req.json().catch(() => ({ password: '' }))
   if (!safeEqual(password, ADMIN_PASSWORD)) return c.json({ error: 'Falsches Passwort' }, 401)
   const token = await sign({ sub: 'admin', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12 }, JWT_SECRET)
@@ -143,7 +149,7 @@ app.post('/api/admin/logout', (c) => {
 app.use('/api/admin/*', async (c, next) => {
   if (c.req.path === '/api/admin/login') return next()
   const token = getCookie(c, 'admin_token')
-  if (!token) return c.json({ error: 'Nicht eingeloggt' }, 401)
+  if (!token || !JWT_SECRET) return c.json({ error: 'Nicht eingeloggt' }, 401)
   try {
     const payload = await verify(token, JWT_SECRET, 'HS256')
     if (payload.sub !== 'admin') throw new Error('not admin')
