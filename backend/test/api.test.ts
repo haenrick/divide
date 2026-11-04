@@ -6,7 +6,7 @@ import { join } from 'path'
 
 process.env.NODE_ENV = 'test'
 process.env.MODE = 'saas'
-process.env.JWT_SECRET = 'test-secret'
+process.env.JWT_SECRET = 'test-secret-at-least-32-characters'
 process.env.ADMIN_PASSWORD = 'admin-pw'
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'divide-')), 'test.db')
 
