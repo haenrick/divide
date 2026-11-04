@@ -7,7 +7,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Achtung bei Updates:** Der Server startet nicht mehr, wenn `JWT_SECRET` (selfhosted oder mit `ADMIN_PASSWORD`) fehlt, kürzer als 32 Zeichen oder ein Platzhalter ist, wenn `PASSWORD` im selfhosted-Modus fehlt oder ein Platzhalter ist, oder wenn `MODE` weder `selfhosted` noch `saas` ist. Die Fehlermeldung beim Start nennt, was zu tun ist (#10, #11)
+
 ### Security
+- Keine Fallbacks mehr auf die öffentlich bekannten Defaults `dev-secret`/`geheim`; ein unbekannter `MODE` schaltet nicht mehr die Zugangskontrolle der API ab (#10, #11)
 - `docker-compose.saas.yml` bindet den Port nur noch an `127.0.0.1`, weil Docker veröffentlichte Ports an `ufw` vorbei freigibt und so Caddy und das Rate-Limit umgangen werden konnten (#12)
 
 ---
