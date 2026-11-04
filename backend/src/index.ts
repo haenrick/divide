@@ -191,7 +191,7 @@ app.post('/api/rooms', async (c) => {
   const body = await readJsonObject(c)
   if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
   const { name, email } = body
-  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name fehlt' }, 400)
   const token = randomBytes(8).toString('hex')
   const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
   const result = db.prepare(
@@ -278,7 +278,7 @@ app.post('/api/activities', async (c) => {
   const body = await readJsonObject(c)
   if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
   const { name } = body
-  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name fehlt' }, 400)
   const result = db.prepare('INSERT INTO activities (name) VALUES (?)').run(name.trim())
   const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
   return c.json(activity, 201)
@@ -302,7 +302,7 @@ app.post('/api/activities/:id/participants', async (c) => {
   const body = await readJsonObject(c)
   if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
   const { name } = body
-  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name fehlt' }, 400)
   const result = db.prepare('INSERT INTO participants (activity_id, name) VALUES (?, ?)').run(activity_id, name.trim())
   return c.json(db.prepare('SELECT * FROM participants WHERE id = ?').get(result.lastInsertRowid), 201)
 })
@@ -329,8 +329,8 @@ app.post('/api/activities/:id/expenses', async (c) => {
   if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
   const { paid_by, amount } = body
   const description = body.description ?? ''
-  if (!Number.isInteger(paid_by) || !isValidAmount(amount)) return c.json({ error: 'Invalid expense' }, 400)
-  if (typeof description !== 'string' || description.length > 200) return c.json({ error: 'Invalid expense' }, 400)
+  if (!Number.isInteger(paid_by) || !isValidAmount(amount)) return c.json({ error: 'Ungültige Ausgabe' }, 400)
+  if (typeof description !== 'string' || description.length > 200) return c.json({ error: 'Ungültige Ausgabe' }, 400)
   const payer = db.prepare('SELECT id FROM participants WHERE id = ? AND activity_id = ?').get(paid_by, activity_id)
   if (!payer) return c.json({ error: 'Zahler gehört nicht zu dieser Gruppe' }, 400)
   const result = db.prepare(

@@ -52,7 +52,9 @@ test('Ausgaben: Zahler muss zur Gruppe gehören, Betrag muss gültige Zahl sein'
   assert.equal((await post({ paid_by: anna, amount: 12.5, description: 'Pizza' })).status, 201)
   assert.equal((await post({ paid_by: bob, amount: 5 })).status, 400)          // fremder Zahler
   assert.equal((await post({ paid_by: 9999, amount: 5, description: 'Test' })).status, 400) // unbekannter Zahler (#2)
-  assert.equal((await post({ paid_by: anna, amount: '5' })).status, 400)       // String
+  const invalid = await post({ paid_by: anna, amount: '5' })                    // String
+  assert.equal(invalid.status, 400)
+  assert.deepEqual(await invalid.json(), { error: 'Ungültige Ausgabe' })
   assert.equal((await post({ paid_by: anna, amount: -1 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 1e12 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 5, description: 'x'.repeat(201) })).status, 400)
@@ -78,7 +80,9 @@ test('Ungültige Bodies auf POST-Routen → 400 statt 500 (#8)', async () => {
     }
   }
   for (const [path, h] of routes.slice(0, 2)) {
-    assert.equal((await raw(path, '{"name":123}', h)).status, 400, `${path} mit name als Zahl`)
+    const r = await raw(path, '{"name":123}', h)
+    assert.equal(r.status, 400, `${path} mit name als Zahl`)
+    assert.deepEqual(await r.json(), { error: 'Name fehlt' })
   }
   assert.equal((await raw(`/api/activities/${a.id}/expenses`, JSON.stringify({ paid_by: anna, amount: 5 }), a.h)).status, 201)
 })
