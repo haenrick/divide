@@ -52,12 +52,39 @@ test('Ausgaben: Zahler muss zur Gruppe gehören, Betrag muss gültige Zahl sein'
   assert.equal((await post({ paid_by: anna, amount: 12.5, description: 'Pizza' })).status, 201)
   assert.equal((await post({ paid_by: bob, amount: 5 })).status, 400)          // fremder Zahler
   assert.equal((await post({ paid_by: 9999, amount: 5, description: 'Test' })).status, 400) // unbekannter Zahler (#2)
-  assert.equal((await post({ paid_by: anna, amount: '5' })).status, 400)       // String
+  const invalid = await post({ paid_by: anna, amount: '5' })                    // String
+  assert.equal(invalid.status, 400)
+  assert.deepEqual(await invalid.json(), { error: 'Ungültige Ausgabe' })
   assert.equal((await post({ paid_by: anna, amount: -1 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 1e12 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 5, description: 'x'.repeat(201) })).status, 400)
   const expenses = await (await call(`/api/activities/${a.id}/expenses`, { headers: a.h })).json() as unknown[]
   assert.equal(expenses.length, 1)                                              // nur die gültige Ausgabe
+})
+
+test('Ungültige Bodies auf POST-Routen → 400 statt 500 (#8)', async () => {
+  const a = await makeRoom('A8')
+  const anna = await addPerson(a, 'Anna')
+  const raw = (path: string, body: string, headers: Record<string, string> = {}) =>
+    call(path, { method: 'POST', body, headers: { 'content-type': 'application/json', ...headers } })
+  const routes: Array<[string, Record<string, string>]> = [
+    ['/api/rooms', { 'x-forwarded-for': '198.51.100.8' }],
+    [`/api/activities/${a.id}/participants`, a.h],
+    [`/api/activities/${a.id}/expenses`, a.h],
+  ]
+  for (const [path, h] of routes) {
+    for (const body of ['{bad', '', 'null', '[]', '5', '"x"']) {
+      const r = await raw(path, body, h)
+      assert.equal(r.status, 400, `${path} mit ${JSON.stringify(body)}`)
+      assert.deepEqual(await r.json(), { error: 'Ungültiger JSON-Body' })
+    }
+  }
+  for (const [path, h] of routes.slice(0, 2)) {
+    const r = await raw(path, '{"name":123}', h)
+    assert.equal(r.status, 400, `${path} mit name als Zahl`)
+    assert.deepEqual(await r.json(), { error: 'Name fehlt' })
+  }
+  assert.equal((await raw(`/api/activities/${a.id}/expenses`, JSON.stringify({ paid_by: anna, amount: 5 }), a.h)).status, 201)
 })
 
 test('Admin-Login: falsches Passwort 401, richtiges 200, Rate-Limit greift', async () => {
