@@ -14,6 +14,9 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - Keine Fallbacks mehr auf die öffentlich bekannten Defaults `dev-secret`/`geheim`; ein unbekannter `MODE` schaltet nicht mehr die Zugangskontrolle der API ab (#10, #11)
 - `docker-compose.saas.yml` bindet den Port nur noch an `127.0.0.1`, weil Docker veröffentlichte Ports an `ufw` vorbei freigibt und so Caddy und das Rate-Limit umgangen werden konnten (#12)
 
+### Fixed
+- Ungültiger oder leerer JSON-Body, JSON ohne Objekt und ein Name, der kein Text ist, führen auf den POST-Routen zu HTTP 400 statt 500. Fehlermeldungen für ungültige Namen und Ausgaben sind jetzt deutsch (#8)
+
 ---
 
 ## [0.2.1] - 2026-03-26
