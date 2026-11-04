@@ -18,6 +18,17 @@ export function setRoomToken(token: string | null) {
   roomToken = token
 }
 
+// Fehlerantworten des Backends haben die Form { "error": "<deutsche Meldung>" }
+export function errorMessage(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string') {
+      return (parsed as { error: string }).error
+    }
+  } catch {}
+  return body
+}
+
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (roomToken) headers['X-Room-Token'] = roomToken
@@ -27,7 +38,7 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   })
   if (res.status === 401) throw new AuthError('Nicht eingeloggt')
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw new Error(errorMessage(await res.text()))
   return res.json()
 }
 
