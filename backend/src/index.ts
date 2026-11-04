@@ -351,40 +351,47 @@ app.delete('/api/expenses/:id', (c) => {
 
 app.get('/api/activities/:id/balances', (c) => {
   const id = Number(c.req.param('id'))
-  const participants = db.prepare('SELECT * FROM participants WHERE activity_id = ?').all(id) as Array<{ id: number; name: string }>
+  const participants = db.prepare('SELECT * FROM participants WHERE activity_id = ? ORDER BY id').all(id) as Array<{ id: number; name: string }>
   const expenses = db.prepare('SELECT * FROM expenses WHERE activity_id = ?').all(id) as Array<{ paid_by: number; amount: number }>
 
   if (participants.length === 0) return c.json({ balances: [], settlements: [], total: 0 })
 
-  const total = expenses.reduce((s, e) => s + e.amount, 0)
-  const share = total / participants.length
+  // Alles in ganzen Cent rechnen, damit Anteile, Salden und Settlements exakt aufgehen
+  const paid = new Map<number, number>(participants.map(p => [p.id, 0]))
+  let total = 0
+  for (const e of expenses) {
+    const amount = Math.round(e.amount * 100)
+    total += amount
+    paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + amount)
+  }
 
-  const net: Record<number, number> = {}
-  for (const p of participants) net[p.id] = -share
-  for (const e of expenses) net[e.paid_by] = (net[e.paid_by] ?? 0) + e.amount
+  // Restcent geht an die ersten Teilnehmer (nach id), damit die Anteile genau total ergeben
+  const base = Math.floor(total / participants.length)
+  const rest = total - base * participants.length
+  const rows = participants.map((p, i) => {
+    const share = base + (i < rest ? 1 : 0)
+    const paidCents = paid.get(p.id) ?? 0
+    return { id: p.id, name: p.name, paid: paidCents, share, net: paidCents - share }
+  })
 
-  const creditors = participants.filter(p => net[p.id] > 0.005).map(p => ({ ...p, amount: net[p.id] }))
-  const debtors   = participants.filter(p => net[p.id] < -0.005).map(p => ({ ...p, amount: -net[p.id] }))
+  const creditors = rows.filter(r => r.net > 0).map(r => ({ name: r.name, amount: r.net }))
+  const debtors   = rows.filter(r => r.net < 0).map(r => ({ name: r.name, amount: -r.net }))
 
   const settlements: Array<{ from: string; to: string; amount: number }> = []
   let i = 0, j = 0
   while (i < debtors.length && j < creditors.length) {
     const pay = Math.min(debtors[i].amount, creditors[j].amount)
-    if (pay > 0.005) settlements.push({ from: debtors[i].name, to: creditors[j].name, amount: Math.round(pay * 100) / 100 })
+    settlements.push({ from: debtors[i].name, to: creditors[j].name, amount: pay / 100 })
     debtors[i].amount -= pay
     creditors[j].amount -= pay
-    if (debtors[i].amount < 0.005) i++
-    if (creditors[j].amount < 0.005) j++
+    if (debtors[i].amount === 0) i++
+    if (creditors[j].amount === 0) j++
   }
 
   return c.json({
-    balances: participants.map(p => ({
-      id: p.id, name: p.name,
-      paid: expenses.filter(e => e.paid_by === p.id).reduce((s, e) => s + e.amount, 0),
-      share, net: Math.round(net[p.id] * 100) / 100,
-    })),
+    balances: rows.map(r => ({ id: r.id, name: r.name, paid: r.paid / 100, share: r.share / 100, net: r.net / 100 })),
     settlements,
-    total: Math.round(total * 100) / 100,
+    total: total / 100,
   })
 })
 
