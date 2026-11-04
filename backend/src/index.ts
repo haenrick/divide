@@ -80,6 +80,12 @@ function isValidAmount(x: unknown): x is number {
   return typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e9
 }
 
+// Body als JSON-Objekt lesen; ungültiges JSON, leerer Body oder Nicht-Objekte → null
+async function readJsonObject(c: Context): Promise<Record<string, unknown> | null> {
+  const body: unknown = await c.req.json().catch(() => null)
+  return body !== null && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
+}
+
 const app = new Hono()
 app.use('/api/login', rateLimit('login', 10, 3 * 60_000))
 app.use('/api/admin/login', rateLimit('admin-login', 10, 3 * 60_000))
@@ -182,8 +188,10 @@ app.delete('/api/admin/activities/:id', (c) => {
 // ─── Rooms (saas) ────────────────────────────────────────────────────────────
 
 app.post('/api/rooms', async (c) => {
-  const { name, email } = await c.req.json()
-  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const body = await readJsonObject(c)
+  if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
+  const { name, email } = body
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
   const token = randomBytes(8).toString('hex')
   const expires_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
   const result = db.prepare(
@@ -191,7 +199,7 @@ app.post('/api/rooms', async (c) => {
   ).run(name.trim(), token, expires_at)
   const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
 
-  if (email && resend) {
+  if (typeof email === 'string' && email && resend) {
     const url = `${APP_URL}/#/r/${token}`
     resend.emails.send({
       from: RESEND_FROM,
@@ -267,8 +275,10 @@ app.get('/api/activities', (c) => {
 
 app.post('/api/activities', async (c) => {
   if (MODE === 'saas') return c.json({ error: 'Nicht verfügbar, nutze /api/rooms' }, 403)
-  const { name } = await c.req.json()
-  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const body = await readJsonObject(c)
+  if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
+  const { name } = body
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
   const result = db.prepare('INSERT INTO activities (name) VALUES (?)').run(name.trim())
   const activity = db.prepare('SELECT * FROM activities WHERE id = ?').get(result.lastInsertRowid)
   return c.json(activity, 201)
@@ -289,8 +299,10 @@ app.get('/api/activities/:id/participants', (c) => {
 
 app.post('/api/activities/:id/participants', async (c) => {
   const activity_id = Number(c.req.param('id'))
-  const { name } = await c.req.json()
-  if (!name?.trim()) return c.json({ error: 'Name required' }, 400)
+  const body = await readJsonObject(c)
+  if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
+  const { name } = body
+  if (typeof name !== 'string' || !name.trim()) return c.json({ error: 'Name required' }, 400)
   const result = db.prepare('INSERT INTO participants (activity_id, name) VALUES (?, ?)').run(activity_id, name.trim())
   return c.json(db.prepare('SELECT * FROM participants WHERE id = ?').get(result.lastInsertRowid), 201)
 })
@@ -313,14 +325,17 @@ app.get('/api/activities/:id/expenses', (c) => {
 
 app.post('/api/activities/:id/expenses', async (c) => {
   const activity_id = Number(c.req.param('id'))
-  const { paid_by, amount, description } = await c.req.json()
+  const body = await readJsonObject(c)
+  if (!body) return c.json({ error: 'Ungültiger JSON-Body' }, 400)
+  const { paid_by, amount } = body
+  const description = body.description ?? ''
   if (!Number.isInteger(paid_by) || !isValidAmount(amount)) return c.json({ error: 'Invalid expense' }, 400)
-  if (typeof (description ?? '') !== 'string' || (description ?? '').length > 200) return c.json({ error: 'Invalid expense' }, 400)
+  if (typeof description !== 'string' || description.length > 200) return c.json({ error: 'Invalid expense' }, 400)
   const payer = db.prepare('SELECT id FROM participants WHERE id = ? AND activity_id = ?').get(paid_by, activity_id)
   if (!payer) return c.json({ error: 'Zahler gehört nicht zu dieser Gruppe' }, 400)
   const result = db.prepare(
     'INSERT INTO expenses (activity_id, paid_by, amount, description) VALUES (?, ?, ?, ?)'
-  ).run(activity_id, paid_by, amount, description ?? '')
+  ).run(activity_id, paid_by, amount, description)
   return c.json(db.prepare(`
     SELECT e.*, p.name as paid_by_name FROM expenses e
     JOIN participants p ON e.paid_by = p.id WHERE e.id = ?

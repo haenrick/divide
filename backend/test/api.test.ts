@@ -60,6 +60,29 @@ test('Ausgaben: Zahler muss zur Gruppe gehören, Betrag muss gültige Zahl sein'
   assert.equal(expenses.length, 1)                                              // nur die gültige Ausgabe
 })
 
+test('Ungültige Bodies auf POST-Routen → 400 statt 500 (#8)', async () => {
+  const a = await makeRoom('A8')
+  const anna = await addPerson(a, 'Anna')
+  const raw = (path: string, body: string, headers: Record<string, string> = {}) =>
+    call(path, { method: 'POST', body, headers: { 'content-type': 'application/json', ...headers } })
+  const routes: Array<[string, Record<string, string>]> = [
+    ['/api/rooms', { 'x-forwarded-for': '198.51.100.8' }],
+    [`/api/activities/${a.id}/participants`, a.h],
+    [`/api/activities/${a.id}/expenses`, a.h],
+  ]
+  for (const [path, h] of routes) {
+    for (const body of ['{bad', '', 'null', '[]', '5', '"x"']) {
+      const r = await raw(path, body, h)
+      assert.equal(r.status, 400, `${path} mit ${JSON.stringify(body)}`)
+      assert.deepEqual(await r.json(), { error: 'Ungültiger JSON-Body' })
+    }
+  }
+  for (const [path, h] of routes.slice(0, 2)) {
+    assert.equal((await raw(path, '{"name":123}', h)).status, 400, `${path} mit name als Zahl`)
+  }
+  assert.equal((await raw(`/api/activities/${a.id}/expenses`, JSON.stringify({ paid_by: anna, amount: 5 }), a.h)).status, 201)
+})
+
 test('Admin-Login: falsches Passwort 401, richtiges 200, Rate-Limit greift', async () => {
   const ip = { 'x-forwarded-for': '203.0.113.7' }
   assert.equal((await call('/api/admin/login', json({ password: 'nope' }, ip))).status, 401)
