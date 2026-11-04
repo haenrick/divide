@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type Activity, type Participant, type Expense, type Balances } from './api'
+  import { parseAmount } from './amount'
 
   let { activity, onBack }: { activity: Activity; onBack: () => void } = $props()
 
@@ -10,6 +11,8 @@
   let expAmount = $state('')
   let expDesc = $state('')
   let expPaidBy = $state<number | null>(null)
+  let expError = $state('')
+  const amountValue = $derived(parseAmount(expAmount))
   let tab = $state<'expenses' | 'balances'>('balances')
 
   async function load() {
@@ -38,9 +41,16 @@
   }
 
   async function addExpense() {
-    const amount = parseFloat(expAmount.replace(',', '.'))
-    if (!expPaidBy || isNaN(amount) || amount <= 0) return
-    const e = await api.expenses.create(activity.id, expPaidBy, amount, expDesc)
+    const amount = amountValue
+    if (!expPaidBy || amount === null) return
+    expError = ''
+    let e: Expense
+    try {
+      e = await api.expenses.create(activity.id, expPaidBy, amount, expDesc)
+    } catch (err) {
+      expError = err instanceof Error && err.message ? err.message : 'Fehler beim Speichern'
+      return
+    }
     expenses = [e, ...expenses]
     expAmount = ''
     expDesc = ''
@@ -133,6 +143,7 @@
           type="text"
           inputmode="decimal"
           bind:value={expAmount}
+          oninput={() => expError = ''}
           placeholder="Betrag €"
           onkeydown={(e) => e.key === 'Enter' && addExpense()}
         />
@@ -143,8 +154,14 @@
           class="desc-input"
           onkeydown={(e) => e.key === 'Enter' && addExpense()}
         />
-        <button onclick={addExpense} disabled={!expAmount || !expPaidBy}>+ ADD</button>
+        <button onclick={addExpense} disabled={amountValue === null || !expPaidBy}>+ ADD</button>
       </div>
+      {#if expAmount.trim() && amountValue === null}
+        <div class="error">✕ ungültiger betrag (z. B. 12,50)</div>
+      {/if}
+      {#if expError}
+        <div class="error">✕ {expError}</div>
+      {/if}
     </section>
   {:else if participants.length < 2}
     <div class="hint">// mindestens 2 teilnehmer für ausgaben</div>
@@ -335,6 +352,7 @@
   .desc-input { grid-column: 1 / -1; }
   .exp-grid button { grid-column: 2; }
   .exp-grid select { min-width: 100px; }
+  .error { font-size: 12px; color: var(--red); margin-top: 6px; }
 
   .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
   .tab {
