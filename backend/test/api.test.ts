@@ -141,6 +141,19 @@ test('Salden: Restcent geht an die ersten Teilnehmer, alles geht auf (#3)', asyn
   assertBalanced(c)
 })
 
+test('Salden: bestehende Beträge mit Bruchteilen von Cent werden auf Cent gerundet (#3)', async () => {
+  const { default: db } = await import('../src/db.ts')
+  const room = await makeRoom('R4')
+  const anna = await addPerson(room, 'Anna'), ben = await addPerson(room, 'Ben')
+  // Altbestand: vor #3 akzeptierte die API mehr als 2 Nachkommastellen
+  db.prepare('INSERT INTO expenses (activity_id, paid_by, amount) VALUES (?, ?, ?)').run(room.id, anna, 3.333)
+  db.prepare('INSERT INTO expenses (activity_id, paid_by, amount) VALUES (?, ?, ?)').run(room.id, ben, 1.006)
+  const b = await (await call(`/api/activities/${room.id}/balances`, { headers: room.h })).json() as Balances
+  assert.equal(b.total, 4.34)
+  assert.deepEqual(b.balances.map(p => p.paid), [3.33, 1.01])
+  assertBalanced(b)
+})
+
 test('Admin-Login: falsches Passwort 401, richtiges 200, Rate-Limit greift', async () => {
   const ip = { 'x-forwarded-for': '203.0.113.7' }
   assert.equal((await call('/api/admin/login', json({ password: 'nope' }, ip))).status, 401)
