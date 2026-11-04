@@ -58,8 +58,16 @@ test('Ausgaben: Zahler muss zur Gruppe gehören, Betrag muss gültige Zahl sein'
   assert.equal((await post({ paid_by: anna, amount: -1 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 1e12 })).status, 400)
   assert.equal((await post({ paid_by: anna, amount: 5, description: 'x'.repeat(201) })).status, 400)
+  for (const amount of [12.345, 0.001, 1.999]) {                                // mehr als 2 Nachkommastellen (#3)
+    const r = await post({ paid_by: anna, amount })
+    assert.equal(r.status, 400, `amount ${amount}`)
+    assert.deepEqual(await r.json(), { error: 'Ungültige Ausgabe' })
+  }
+  for (const amount of [12.34, 0.07, 19.99, 999999999.99]) {                    // Cent-Beträge bleiben gültig
+    assert.equal((await post({ paid_by: anna, amount })).status, 201, `amount ${amount}`)
+  }
   const expenses = await (await call(`/api/activities/${a.id}/expenses`, { headers: a.h })).json() as unknown[]
-  assert.equal(expenses.length, 1)                                              // nur die gültige Ausgabe
+  assert.equal(expenses.length, 5)                                              // nur die gültigen Ausgaben
 })
 
 test('Ungültige Bodies auf POST-Routen → 400 statt 500 (#8)', async () => {

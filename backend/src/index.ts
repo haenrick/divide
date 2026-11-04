@@ -76,8 +76,9 @@ function rateLimit(name: string, limit: number, windowMs: number) {
   }
 }
 
+// Geldbetrag: positiv, unter 1 Mrd. und höchstens 2 Nachkommastellen (ganze Cent)
 function isValidAmount(x: unknown): x is number {
-  return typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e9
+  return typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e9 && Math.round(x * 100) / 100 === x
 }
 
 // Body als JSON-Objekt lesen; ungültiges JSON, leerer Body oder Nicht-Objekte → null
